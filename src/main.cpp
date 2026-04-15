@@ -218,6 +218,31 @@ String buildSavedUpstreamNetworksJson() {
     return json;
 }
 
+String buildBlockedDnsRequestsJson(uint32_t& totalBlockedCount, size_t& recentBlockedCount) {
+    DNSBlockedRequestLogEntry entries[kDnsBlockedLogCapacity];
+    totalBlockedCount = 0;
+    recentBlockedCount = dnsServer.copyBlockedRequests(entries, kDnsBlockedLogCapacity, totalBlockedCount);
+
+    String json = "[";
+    json.reserve(recentBlockedCount * 160 + 2);
+
+    for (size_t i = 0; i < recentBlockedCount; ++i) {
+        if (i > 0) json += ",";
+        json += "{\"domain\":\"";
+        json += jsonEscape(String(entries[i].domain));
+        json += "\",\"clientIP\":\"";
+        json += jsonEscape(String(entries[i].clientIP));
+        json += "\",\"qType\":\"";
+        json += jsonEscape(String(entries[i].qType));
+        json += "\",\"blockedAt\":";
+        json += String(entries[i].blockedAtUptimeSeconds);
+        json += "}";
+    }
+
+    json += "]";
+    return json;
+}
+
 int performUpstreamScan(UpstreamScanResult* results, size_t maxResults) {
     if (upstreamScanInProgress) return -1;
     upstreamScanInProgress = true;
@@ -507,9 +532,12 @@ String buildStatusJson() {
     String dnsAllowlist = jsonEscape(String(dnsCfg.allowlist));
     String natStatus = jsonEscape(String(getNATStatusText()));
     String savedNetworks = buildSavedUpstreamNetworksJson();
+    uint32_t dnsBlockedCount = 0;
+    size_t dnsBlockedRecentCount = 0;
+    String dnsBlockedRequests = buildBlockedDnsRequestsJson(dnsBlockedCount, dnsBlockedRecentCount);
     String json;
 
-    json.reserve(2200);
+    json.reserve(5600);
     json += "{";
     json += "\"rx\":";
     json += String((unsigned)cfg.rxCount);
@@ -565,7 +593,13 @@ String buildStatusJson() {
     json += String((unsigned)getDNSAllowlistCount());
     json += ",\"dnsAllowlist\":\"";
     json += dnsAllowlist;
-    json += "\",\"natEnabled\":";
+    json += "\",\"dnsBlockedCount\":";
+    json += String((unsigned)dnsBlockedCount);
+    json += ",\"dnsBlockedRecentCount\":";
+    json += String((unsigned)dnsBlockedRecentCount);
+    json += ",\"dnsBlockedRequests\":";
+    json += dnsBlockedRequests;
+    json += ",\"natEnabled\":";
     json += String(natEnabled ? 1 : 0);
     json += ",\"natStatus\":\"";
     json += natStatus;
@@ -586,6 +620,11 @@ void setupWebServer() {
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send(200, "application/json", buildStatusJson());
+    });
+
+    server.on("/api/dns/blocked/clear", HTTP_GET, [](AsyncWebServerRequest* req) {
+        dnsServer.clearBlockedRequests();
+        req->send(200, "text/plain", "OK");
     });
 
     server.on("/api/upstream/scan", HTTP_GET, [](AsyncWebServerRequest* req) {

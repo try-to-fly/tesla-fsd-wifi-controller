@@ -10,6 +10,7 @@ constexpr uint16_t kDnsTypeA = 1;
 constexpr uint16_t kDnsTypeAAAA = 28;
 constexpr uint16_t kDnsClassIN = 1;
 constexpr uint32_t kDnsTtlSeconds = 60;
+portMUX_TYPE gDnsBlockedLogMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint16_t readU16(const uint8_t* ptr) {
     return static_cast<uint16_t>((ptr[0] << 8) | ptr[1]);
@@ -100,6 +101,63 @@ bool DNSWhitelistServer::isAllowedDomain(const DNSFilterConfig& cfg, const Strin
     }
 
     return false;
+}
+
+String DNSWhitelistServer::formatQueryType(uint16_t qType) const {
+    switch (qType) {
+        case kDnsTypeA:    return "A";
+        case kDnsTypeAAAA: return "AAAA";
+        default:           return String("TYPE") + qType;
+    }
+}
+
+void DNSWhitelistServer::logBlockedRequest(const String& domain, uint16_t qType) {
+    DNSBlockedRequestLogEntry entry = {};
+    String normalizedDomain = normalizeDomain(domain);
+    String typeText = formatQueryType(qType);
+    String clientIP = udp_.remoteIP().toString();
+
+    normalizedDomain.toCharArray(entry.domain, sizeof(entry.domain));
+    clientIP.toCharArray(entry.clientIP, sizeof(entry.clientIP));
+    typeText.toCharArray(entry.qType, sizeof(entry.qType));
+    entry.blockedAtUptimeSeconds = millis() / 1000;
+
+    portENTER_CRITICAL(&gDnsBlockedLogMux);
+    blockedRequests_[blockedRequestHead_] = entry;
+    blockedRequestHead_ = (blockedRequestHead_ + 1) % kDnsBlockedLogCapacity;
+    if (blockedRequestCount_ < kDnsBlockedLogCapacity) {
+        ++blockedRequestCount_;
+    }
+    ++totalBlockedCount_;
+    portEXIT_CRITICAL(&gDnsBlockedLogMux);
+}
+
+size_t DNSWhitelistServer::copyBlockedRequests(DNSBlockedRequestLogEntry* dest, size_t maxEntries, uint32_t& totalBlockedCount) {
+    totalBlockedCount = 0;
+    if (dest == nullptr || maxEntries == 0) return 0;
+
+    portENTER_CRITICAL(&gDnsBlockedLogMux);
+    totalBlockedCount = totalBlockedCount_;
+    size_t count = blockedRequestCount_ < maxEntries ? blockedRequestCount_ : maxEntries;
+
+    for (size_t i = 0; i < count; ++i) {
+        size_t index = (blockedRequestHead_ + kDnsBlockedLogCapacity - 1 - i) % kDnsBlockedLogCapacity;
+        dest[i] = blockedRequests_[index];
+    }
+    portEXIT_CRITICAL(&gDnsBlockedLogMux);
+
+    return count;
+}
+
+void DNSWhitelistServer::clearBlockedRequests() {
+    portENTER_CRITICAL(&gDnsBlockedLogMux);
+    for (size_t i = 0; i < kDnsBlockedLogCapacity; ++i) {
+        blockedRequests_[i] = DNSBlockedRequestLogEntry{};
+    }
+    blockedRequestCount_ = 0;
+    blockedRequestHead_ = 0;
+    totalBlockedCount_ = 0;
+    portEXIT_CRITICAL(&gDnsBlockedLogMux);
 }
 
 void DNSWhitelistServer::sendErrorResponse(const uint8_t* query, size_t questionEnd, uint16_t requestFlags, uint16_t rcode) {
@@ -201,6 +259,7 @@ void DNSWhitelistServer::processNextRequest(const DNSFilterConfig& cfg, bool ups
     }
 
     if (!isAllowedDomain(cfg, domain)) {
+        logBlockedRequest(domain, qType);
         sendErrorResponse(query, questionEnd, requestFlags, 5);
         return;
     }

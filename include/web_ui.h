@@ -9,13 +9,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <title>FSD 控制器</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;background:#0b1120;color:#e2e8f0;min-height:100vh;padding:16px}
-h1{text-align:center;font-size:22px;color:#38bdf8;padding:20px 0 24px;font-weight:700;letter-spacing:1px}
-.card{background:#131d32;border-radius:14px;padding:18px;margin-bottom:16px}
+body{font-family:-apple-system,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;background:radial-gradient(circle at top,#15213a 0,#0b1120 45%,#090e1a 100%);color:#e2e8f0;min-height:100vh;padding:16px}
+.page{width:min(1180px,100%);margin:0 auto}
+.page-header{text-align:center;padding:10px 0 22px}
+h1{font-size:22px;color:#38bdf8;font-weight:700;letter-spacing:1px}
+.page-subtitle{margin-top:8px;font-size:13px;line-height:1.6;color:#94a3b8}
+.dashboard{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
+.card{background:rgba(19,29,50,.96);border:1px solid rgba(56,189,248,.08);border-radius:16px;padding:18px;backdrop-filter:blur(8px);box-shadow:0 18px 40px rgba(2,8,23,.22)}
 .card-title{font-size:12px;font-weight:700;color:#64748b;letter-spacing:2px;margin-bottom:14px}
 .row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #1e293b;gap:12px}
 .row:last-child{border-bottom:none}
-.row-label{font-size:14px;font-weight:500}
+.row-label{font-size:14px;font-weight:500;flex:1;min-width:0}
 .toggle{position:relative;width:50px;height:28px;flex:0 0 auto}
 .toggle input{opacity:0;width:0;height:0}
 .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#334155;border-radius:28px;transition:.3s}
@@ -65,6 +69,8 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
 .msg.err{color:#ef4444}
 .inline-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .inline-actions .field-label{margin-bottom:0}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px}
+.section-head .field-label{margin-bottom:0}
 .saved-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
 .saved-item{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#1a2740;border:1px solid #334155;border-radius:10px;padding:12px}
 .saved-main{min-width:0;flex:1}
@@ -75,13 +81,43 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
 .tag.busy{background:rgba(56,189,248,.16);color:#7dd3fc}
 .tag.warn{background:rgba(234,179,8,.16);color:#fde68a}
 .empty-box{border:1px dashed #334155;border-radius:10px;padding:12px;text-align:center;font-size:12px;color:#64748b}
+@media (min-width:980px){
+body{padding:24px}
+.page-header{padding:18px 0 28px}
+h1{font-size:30px}
+.page-subtitle{font-size:14px}
+.dashboard{grid-template-columns:1fr 1.1fr 1.1fr;gap:18px}
+.card-controls{grid-column:1;grid-row:1}
+.card-status{grid-column:2 / span 2;grid-row:1}
+.card-hotspot{grid-column:1 / -1;grid-row:2}
+.card-dns{grid-column:1 / -1;grid-row:3}
+.card-ota{grid-column:1 / -1;grid-row:4}
+.card{padding:20px}
+.row,.status-row{padding:13px 0}
+.row select{width:clamp(132px,42%,190px);flex:0 0 clamp(132px,42%,190px)}
+.status-text{max-width:60%}
+}
+@media (max-width:640px){
+body{padding:12px}
+.page-header{padding:6px 0 18px}
+.page-subtitle{font-size:12px}
+.inline-actions,.section-head{align-items:flex-start;flex-direction:column}
+.actions{flex-direction:column}
+.saved-item{align-items:flex-start;flex-direction:column}
+.saved-item .ghost-btn.small-btn{align-self:flex-end}
+}
 </style>
 </head>
 <body>
 
-<h1>FSD 控制器</h1>
+<div class="page">
+<div class="page-header">
+  <h1>FSD 控制器</h1>
+  <div class="page-subtitle">桌面端与移动端统一适配，便于管理热点转发、DNS 白名单和设备状态。</div>
+</div>
+<div class="dashboard">
 
-<div class="card">
+<div class="card card-controls">
   <div class="card-title">控制</div>
   <div class="row">
     <span class="row-label">FSD 开关</span>
@@ -126,7 +162,7 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
   </div>
 </div>
 
-<div class="card">
+<div class="card card-feature card-hotspot">
   <div class="card-title">上游热点</div>
   <div class="row">
     <span class="row-label">启用手机热点接入</span>
@@ -162,7 +198,7 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
   <div class="status-row"><span>AP 地址</span><span id="sAPIP" class="status-ok status-text">--</span></div>
 </div>
 
-<div class="card">
+<div class="card card-feature card-dns">
   <div class="card-title">DNS 白名单</div>
   <div class="row">
     <span class="row-label">启用域名白名单</span>
@@ -180,9 +216,16 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
   <div class="msg" id="dnsMsg"></div>
   <div class="status-row"><span>白名单状态</span><span id="sDNSMode" class="status-no status-text">--</span></div>
   <div class="status-row"><span>规则数量</span><span id="sDNSCount" class="status-no status-text">0</span></div>
+  <div class="status-row"><span>拦截总数</span><span id="sDNSBlocked" class="status-no status-text">0</span></div>
+  <div class="section-head">
+    <div class="field-label">最近被拦截请求</div>
+    <button class="ghost-btn small-btn" onclick="clearBlockedDns()">清空记录</button>
+  </div>
+  <div class="hint">这里只保留最近 20 条内存记录，用来排查哪些域名被白名单挡住了；设备重启后会清空。</div>
+  <div class="saved-list" id="dnsBlockedList"></div>
 </div>
 
-<div class="card">
+<div class="card card-status">
   <div class="card-title">状态</div>
   <div class="stats">
     <div class="stat"><div class="stat-val green" id="sModified">0</div><div class="stat-label">已修改</div></div>
@@ -194,7 +237,7 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
   <div class="status-row"><span>FSD 已触发</span><span id="sFSD" class="status-no status-text">--</span></div>
 </div>
 
-<div class="card">
+<div class="card card-full card-ota">
   <div class="card-title">固件更新</div>
   <div class="ota-row">
     <label class="file-btn" for="fwFile">选择文件</label>
@@ -206,13 +249,19 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
   <div class="msg" id="otaMsg"></div>
 </div>
 
+</div>
+</div>
+
 <script>
 let dnsDirty=false;
 let scanResults=[];
 let pendingScanResultsRender=false;
+let latestBlockedDnsRequests=[];
+let latestStatusUptime=0;
 
 function markDnsDirty(){
   dnsDirty=true;
+  renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
 }
 
 function setStatusText(id,text,className){
@@ -254,6 +303,30 @@ function setNetMessage(text,type){
   const msg=document.getElementById('netMsg');
   msg.textContent=text;
   msg.className='msg'+(type?' '+type:'');
+}
+
+function normalizeDomain(domain){
+  let normalized=(domain||'').trim().toLowerCase();
+  while(normalized.endsWith('.'))normalized=normalized.slice(0,-1);
+  return normalized;
+}
+
+function getDnsAllowlistRules(){
+  return (document.getElementById('dnsAllowlist').value||'')
+    .split(/[\s,;]+/)
+    .map(normalizeDomain)
+    .filter(Boolean);
+}
+
+function allowlistRuleMatchesDomain(domain,rule){
+  if(!domain||!rule)return false;
+  return domain===rule||(domain.length>rule.length&&domain.endsWith('.'+rule));
+}
+
+function isDomainAlreadyAllowed(domain){
+  const normalizedDomain=normalizeDomain(domain);
+  if(!normalizedDomain)return false;
+  return getDnsAllowlistRules().some(rule=>allowlistRuleMatchesDomain(normalizedDomain,rule));
 }
 
 function renderScanResults(){
@@ -349,6 +422,59 @@ function renderSavedNetworks(networks){
   });
 }
 
+function formatRelativeTime(seconds){
+  const delta=Math.max(0,seconds||0);
+  if(delta<60)return delta+'秒前';
+  if(delta<3600)return Math.floor(delta/60)+'分前';
+  if(delta<86400)return Math.floor(delta/3600)+'小时前';
+  return Math.floor(delta/86400)+'天前';
+}
+
+function renderBlockedDnsRequests(requests,currentUptime){
+  const wrap=document.getElementById('dnsBlockedList');
+  wrap.innerHTML='';
+
+  if(!Array.isArray(requests)||!requests.length){
+    const empty=document.createElement('div');
+    empty.className='empty-box';
+    empty.textContent='暂时没有白名单拦截记录。';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  requests.forEach(item=>{
+    const row=document.createElement('div');
+    row.className='saved-item';
+    const normalizedDomain=normalizeDomain(item.domain);
+    const alreadyAllowed=isDomainAlreadyAllowed(normalizedDomain);
+
+    const main=document.createElement('div');
+    main.className='saved-main';
+
+    const name=document.createElement('div');
+    name.className='saved-name';
+    name.textContent=item.domain||'(未知域名)';
+    main.appendChild(name);
+
+    const tags=document.createElement('div');
+    tags.className='saved-tags';
+    if(item.clientIP)appendTag(tags,item.clientIP,'');
+    if(item.qType)appendTag(tags,item.qType,'warn');
+    appendTag(tags,formatRelativeTime((currentUptime||0)-(item.blockedAt||0)),'busy');
+    main.appendChild(tags);
+
+    const addBtn=document.createElement('button');
+    addBtn.className='ghost-btn small-btn';
+    addBtn.textContent=alreadyAllowed?'已在白名单':'加入白名单';
+    addBtn.disabled=alreadyAllowed||!normalizedDomain;
+    addBtn.onclick=()=>addBlockedDomainToAllowlist(normalizedDomain);
+
+    row.appendChild(main);
+    row.appendChild(addBtn);
+    wrap.appendChild(row);
+  });
+}
+
 function poll(){
   fetch('/api/status').then(r=>r.json()).then(d=>{
     document.getElementById('sModified').textContent=d.modified;
@@ -385,6 +511,10 @@ function poll(){
     setStatusText('sAPIP',d.apIP||'--','status-ok');
     setWideStatusText('sDNSMode',d.dnsWhitelistEnable?'已启用':'未启用',d.dnsWhitelistEnable?'status-ok':'status-no');
     setStatusText('sDNSCount',String(d.dnsWhitelistCount||0),d.dnsWhitelistCount?'status-ok':'status-no');
+    setStatusText('sDNSBlocked',String(d.dnsBlockedCount||0),d.dnsBlockedCount?'status-err':'status-no');
+    latestBlockedDnsRequests=Array.isArray(d.dnsBlockedRequests)?d.dnsBlockedRequests:[];
+    latestStatusUptime=d.uptime||0;
+    renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
   }).catch(()=>{});
 }
 
@@ -479,7 +609,7 @@ document.getElementById('scanResults').addEventListener('blur',()=>{
   }
 });
 
-function saveDns(){
+function persistDnsAllowlist(successText){
   const msg=document.getElementById('dnsMsg');
   const params=new URLSearchParams();
 
@@ -494,11 +624,58 @@ function saveDns(){
     return r.text();
   }).then(()=>{
     dnsDirty=false;
-    msg.textContent='DNS 白名单已保存';
+    msg.textContent=successText||'DNS 白名单已保存';
     msg.className='msg ok';
     poll();
   }).catch(()=>{
     msg.textContent='保存失败';
+    msg.className='msg err';
+  });
+}
+
+function saveDns(){
+  persistDnsAllowlist('DNS 白名单已保存');
+}
+
+function addBlockedDomainToAllowlist(domain){
+  const normalizedDomain=normalizeDomain(domain);
+  const msg=document.getElementById('dnsMsg');
+
+  if(!normalizedDomain){
+    msg.textContent='域名无效，无法加入白名单';
+    msg.className='msg err';
+    return;
+  }
+
+  if(isDomainAlreadyAllowed(normalizedDomain)){
+    msg.textContent='这个域名已经在白名单里了';
+    msg.className='msg ok';
+    renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
+    return;
+  }
+
+  const textarea=document.getElementById('dnsAllowlist');
+  const current=textarea.value.trim();
+  textarea.value=current?current+'\n'+normalizedDomain:normalizedDomain;
+  dnsDirty=true;
+  renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
+  persistDnsAllowlist('已加入白名单: '+normalizedDomain);
+}
+
+function clearBlockedDns(){
+  const msg=document.getElementById('dnsMsg');
+  msg.textContent='清空中...';
+  msg.className='msg';
+
+  fetch('/api/dns/blocked/clear').then(r=>{
+    if(!r.ok)throw new Error('clear failed');
+    return r.text();
+  }).then(()=>{
+    msg.textContent='拦截记录已清空';
+    msg.className='msg ok';
+    poll();
+  }).catch(()=>{
+    msg.textContent='清空失败';
     msg.className='msg err';
   });
 }
