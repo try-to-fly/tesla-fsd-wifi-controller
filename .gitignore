@@ -1,4 +1,25 @@
 .DS_Store
+
+# PlatformIO / build artifacts
 .pio/
+.sconsign*.dblite
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+
+# ESP-IDF generated config
+sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
+!sdkconfig.defaults.*
+
+# Editor / IDE files
+.vscode/
+.idea/
+*.code-workspace
+
+# Python cache
 __pycache__/
 *.pyc
