@@ -1,6 +1,6 @@
 # Tesla FSD WIFI Controller — ESP32 Web 版
 
-基于 [Tesla FSD Controller](https://github.com/JelloEa/tesla-fsd-controller) 的 ESP32 + WiFi 控制面板版本。教程请参考Tesla FSD Controller项目，本项目仅基于Tesla FSD Controller增加wifi热点和dns白名单功能。
+基于 [Tesla FSD Controller](https://github.com/JelloEa/tesla-fsd-controller) 修改。教程请参考Tesla FSD Controller项目。
 
 
 ---
@@ -12,4 +12,9 @@
 
 ---
 
-## 主要新增功能-iphone共享热点给esp32，esp32设置dns白名单，esp32共享热点给车机
+## 新增功能
+- wifi热点转发（手机共享热点给esp32 --> esp32共享热点给车机）
+- dns白名单
+
+## 提示
+- esp32一般只支持2.4G wifi，iphone共享热点可能需要打开兼容性模式
