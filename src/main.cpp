@@ -29,6 +29,9 @@ static const IPAddress AP_IP(192, 168, 4, 1);
 static const IPAddress AP_GATEWAY(192, 168, 4, 1);
 static const IPAddress AP_SUBNET(255, 255, 255, 0);
 static constexpr uint32_t UPSTREAM_RETRY_MS = 15000;
+static constexpr uint32_t UPSTREAM_FAILURE_RETRY_MS = 3000;
+static constexpr uint8_t MAX_UPSTREAM_NETWORKS = 10;
+static constexpr uint8_t MAX_SCAN_RESULTS = 12;
 
 // ── Globals ──
 static TWAIDriver     canDriver;
@@ -38,15 +41,30 @@ static DNSWhitelistServer dnsServer;
 static volatile bool  otaPendingRestart = false;
 static bool           natEnabled = false;
 
+struct SavedUpstreamNetwork {
+    char ssid[33] = {};
+    char pass[65] = {};
+};
+
+struct UpstreamScanResult {
+    char ssid[33]   = {};
+    int32_t rssi    = -127;
+    bool secure     = false;
+    bool saved      = false;
+};
+
 struct UpstreamWiFiConfig {
-    bool     enabled             = false;
-    char     ssid[33]            = {};
-    char     pass[65]            = {};
-    volatile bool applyRequested = false;
-    uint32_t lastAttemptMillis   = 0;
+    bool                 enabled             = false;
+    SavedUpstreamNetwork networks[MAX_UPSTREAM_NETWORKS];
+    uint8_t              networkCount        = 0;
+    int8_t               activeIndex         = -1;
+    uint8_t              nextTryIndex        = 0;
+    volatile bool        applyRequested      = false;
+    uint32_t             lastAttemptMillis   = 0;
 };
 
 static UpstreamWiFiConfig wifiCfg;
+static volatile bool upstreamScanInProgress = false;
 
 static DNSFilterConfig dnsCfg;
 
@@ -78,8 +96,210 @@ String jsonEscape(const String& value) {
     return escaped;
 }
 
+bool isReservedUpstreamSSID(const String& ssid) {
+    return ssid.equals(AP_SSID);
+}
+
+void clearSavedUpstreamNetwork(SavedUpstreamNetwork& network) {
+    network = SavedUpstreamNetwork{};
+}
+
+void clearSavedUpstreamNetworks() {
+    for (uint8_t i = 0; i < MAX_UPSTREAM_NETWORKS; ++i) {
+        clearSavedUpstreamNetwork(wifiCfg.networks[i]);
+    }
+    wifiCfg.networkCount = 0;
+    wifiCfg.activeIndex = -1;
+    wifiCfg.nextTryIndex = 0;
+}
+
+int findSavedUpstreamNetwork(const String& ssid) {
+    for (uint8_t i = 0; i < wifiCfg.networkCount; ++i) {
+        if (ssid.equals(wifiCfg.networks[i].ssid)) return i;
+    }
+    return -1;
+}
+
+bool addOrUpdateSavedUpstreamNetwork(const String& ssidInput, const String& passInput, bool overwritePass) {
+    String ssid = ssidInput;
+    ssid.trim();
+
+    if (ssid.isEmpty() || ssid.length() > 32 || passInput.length() > 63 || isReservedUpstreamSSID(ssid)) {
+        return false;
+    }
+
+    int index = findSavedUpstreamNetwork(ssid);
+    bool isNew = index < 0;
+
+    if (isNew) {
+        if (wifiCfg.networkCount >= MAX_UPSTREAM_NETWORKS) return false;
+        index = wifiCfg.networkCount++;
+        clearSavedUpstreamNetwork(wifiCfg.networks[index]);
+        copyStringToBuffer(wifiCfg.networks[index].ssid, sizeof(wifiCfg.networks[index].ssid), ssid);
+    }
+
+    if (isNew || overwritePass) {
+        copyStringToBuffer(wifiCfg.networks[index].pass, sizeof(wifiCfg.networks[index].pass), passInput);
+    }
+
+    return true;
+}
+
+bool removeSavedUpstreamNetwork(const String& ssidInput) {
+    String ssid = ssidInput;
+    ssid.trim();
+
+    int index = findSavedUpstreamNetwork(ssid);
+    if (index < 0) return false;
+
+    for (uint8_t i = index; i + 1 < wifiCfg.networkCount; ++i) {
+        wifiCfg.networks[i] = wifiCfg.networks[i + 1];
+    }
+
+    if (wifiCfg.networkCount > 0) {
+        --wifiCfg.networkCount;
+        clearSavedUpstreamNetwork(wifiCfg.networks[wifiCfg.networkCount]);
+    }
+
+    if (wifiCfg.networkCount == 0) {
+        wifiCfg.activeIndex = -1;
+        wifiCfg.nextTryIndex = 0;
+    } else {
+        if (wifiCfg.activeIndex == index) {
+            wifiCfg.activeIndex = -1;
+        } else if (wifiCfg.activeIndex > index) {
+            --wifiCfg.activeIndex;
+        }
+        if (wifiCfg.nextTryIndex >= wifiCfg.networkCount) {
+            wifiCfg.nextTryIndex = 0;
+        }
+    }
+
+    return true;
+}
+
 bool hasUpstreamCredentials() {
-    return wifiCfg.ssid[0] != '\0';
+    return wifiCfg.networkCount > 0;
+}
+
+String getConnectedUpstreamSSID() {
+    return WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String();
+}
+
+String getActiveUpstreamSSID() {
+    if (WiFi.status() == WL_CONNECTED) return WiFi.SSID();
+    if (wifiCfg.activeIndex >= 0 && wifiCfg.activeIndex < wifiCfg.networkCount) {
+        return String(wifiCfg.networks[wifiCfg.activeIndex].ssid);
+    }
+    return String();
+}
+
+String buildSavedUpstreamNetworksJson() {
+    String json = "[";
+    json.reserve(wifiCfg.networkCount * 96 + 2);
+
+    String connectedSSID = getConnectedUpstreamSSID();
+    String activeSSID = getActiveUpstreamSSID();
+
+    for (uint8_t i = 0; i < wifiCfg.networkCount; ++i) {
+        if (i > 0) json += ",";
+        json += "{\"ssid\":\"";
+        json += jsonEscape(String(wifiCfg.networks[i].ssid));
+        json += "\",\"hasPass\":";
+        json += (wifiCfg.networks[i].pass[0] != '\0' ? "true" : "false");
+        json += ",\"connected\":";
+        json += (connectedSSID.equals(wifiCfg.networks[i].ssid) ? "true" : "false");
+        json += ",\"active\":";
+        json += (activeSSID.equals(wifiCfg.networks[i].ssid) ? "true" : "false");
+        json += "}";
+    }
+
+    json += "]";
+    return json;
+}
+
+int performUpstreamScan(UpstreamScanResult* results, size_t maxResults) {
+    if (upstreamScanInProgress) return -1;
+    upstreamScanInProgress = true;
+
+    WiFi.scanDelete();
+    int foundCount = WiFi.scanNetworks(false, true);
+    int uniqueCount = 0;
+
+    if (foundCount > 0) {
+        for (int i = 0; i < foundCount; ++i) {
+            String ssid = WiFi.SSID(i);
+            ssid.trim();
+
+            if (ssid.isEmpty() || isReservedUpstreamSSID(ssid)) continue;
+
+            int existing = -1;
+            for (int j = 0; j < uniqueCount; ++j) {
+                if (ssid.equals(results[j].ssid)) {
+                    existing = j;
+                    break;
+                }
+            }
+
+            int32_t rssi = WiFi.RSSI(i);
+            bool secure = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+            bool saved = findSavedUpstreamNetwork(ssid) >= 0;
+
+            if (existing >= 0) {
+                if (rssi > results[existing].rssi) {
+                    copyStringToBuffer(results[existing].ssid, sizeof(results[existing].ssid), ssid);
+                    results[existing].rssi = rssi;
+                    results[existing].secure = secure;
+                    results[existing].saved = saved;
+                }
+                continue;
+            }
+
+            if (uniqueCount >= static_cast<int>(maxResults)) continue;
+
+            copyStringToBuffer(results[uniqueCount].ssid, sizeof(results[uniqueCount].ssid), ssid);
+            results[uniqueCount].rssi = rssi;
+            results[uniqueCount].secure = secure;
+            results[uniqueCount].saved = saved;
+            ++uniqueCount;
+        }
+
+        for (int i = 0; i < uniqueCount - 1; ++i) {
+            for (int j = i + 1; j < uniqueCount; ++j) {
+                if (results[j].rssi > results[i].rssi) {
+                    UpstreamScanResult tmp = results[i];
+                    results[i] = results[j];
+                    results[j] = tmp;
+                }
+            }
+        }
+    }
+
+    WiFi.scanDelete();
+    upstreamScanInProgress = false;
+    return uniqueCount;
+}
+
+int selectNextUpstreamNetworkIndex() {
+    if (!hasUpstreamCredentials()) return -1;
+
+    UpstreamScanResult results[MAX_SCAN_RESULTS];
+    int scanCount = performUpstreamScan(results, MAX_SCAN_RESULTS);
+
+    if (scanCount > 0) {
+        for (int i = 0; i < scanCount; ++i) {
+            int index = findSavedUpstreamNetwork(String(results[i].ssid));
+            if (index >= 0) return index;
+        }
+    }
+
+    if (wifiCfg.nextTryIndex >= wifiCfg.networkCount) {
+        wifiCfg.nextTryIndex = 0;
+    }
+
+    int selectedIndex = wifiCfg.nextTryIndex;
+    wifiCfg.nextTryIndex = (wifiCfg.nextTryIndex + 1) % wifiCfg.networkCount;
+    return selectedIndex;
 }
 
 uint8_t getDNSAllowlistCount() {
@@ -129,20 +349,41 @@ void requestUpstreamApply() {
 void startUpstreamConnect() {
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
 
-    Serial.printf("Connecting upstream WiFi: %s\n", wifiCfg.ssid);
-    WiFi.begin(wifiCfg.ssid, wifiCfg.pass);
+    int networkIndex = selectNextUpstreamNetworkIndex();
+    if (networkIndex < 0 || networkIndex >= wifiCfg.networkCount) {
+        wifiCfg.activeIndex = -1;
+        wifiCfg.lastAttemptMillis = millis();
+        Serial.println("No upstream hotspot available");
+        return;
+    }
+
+    wifiCfg.activeIndex = networkIndex;
+    wifiCfg.nextTryIndex = (networkIndex + 1) % wifiCfg.networkCount;
+
+    const SavedUpstreamNetwork& network = wifiCfg.networks[networkIndex];
+    Serial.printf("Connecting upstream WiFi: %s\n", network.ssid);
+    WiFi.disconnect(false, false);
+    if (network.pass[0] != '\0') {
+        WiFi.begin(network.ssid, network.pass);
+    } else {
+        WiFi.begin(network.ssid);
+    }
     wifiCfg.lastAttemptMillis = millis();
 }
 
 void applyUpstreamWiFiConfig() {
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) {
         WiFi.disconnect(false, true);
+        wifiCfg.activeIndex = -1;
+        wifiCfg.nextTryIndex = 0;
         wifiCfg.lastAttemptMillis = 0;
         Serial.println("Upstream WiFi disabled");
         return;
     }
 
     WiFi.disconnect(false, true);
+    wifiCfg.activeIndex = -1;
+    wifiCfg.nextTryIndex = 0;
     startUpstreamConnect();
 }
 
@@ -154,10 +395,27 @@ void serviceUpstreamWiFi() {
     }
 
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
-    if (WiFi.status() == WL_CONNECTED) return;
+    if (WiFi.status() == WL_CONNECTED) {
+        int connectedIndex = findSavedUpstreamNetwork(WiFi.SSID());
+        if (connectedIndex >= 0) {
+            wifiCfg.activeIndex = connectedIndex;
+        }
+        return;
+    }
 
     uint32_t now = millis();
-    if (wifiCfg.lastAttemptMillis == 0 || now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_MS) {
+    wl_status_t status = WiFi.status();
+    bool shouldRetry = wifiCfg.lastAttemptMillis == 0;
+
+    if (!shouldRetry) {
+        if (status == WL_NO_SSID_AVAIL || status == WL_CONNECT_FAILED || status == WL_CONNECTION_LOST) {
+            shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_FAILURE_RETRY_MS;
+        } else {
+            shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_MS;
+        }
+    }
+
+    if (shouldRetry) {
         startUpstreamConnect();
     }
 }
@@ -184,9 +442,21 @@ void loadConfig() {
     cfg.isaChimeSuppress   = prefs.getBool("isaChm", false);
     cfg.emergencyDetection = prefs.getBool("emDet", true);
     cfg.chinaMode          = prefs.getBool("cnMode", false);
+    clearSavedUpstreamNetworks();
     wifiCfg.enabled        = prefs.getBool("upEn", false);
-    copyStringToBuffer(wifiCfg.ssid, sizeof(wifiCfg.ssid), prefs.getString("upSsid", ""));
-    copyStringToBuffer(wifiCfg.pass, sizeof(wifiCfg.pass), prefs.getString("upPass", ""));
+    uint8_t storedNetworkCount = prefs.getUChar("upCnt", 0);
+    for (uint8_t i = 0; i < storedNetworkCount && i < MAX_UPSTREAM_NETWORKS; ++i) {
+        char ssidKey[10];
+        char passKey[10];
+        snprintf(ssidKey, sizeof(ssidKey), "upSsid%u", i);
+        snprintf(passKey, sizeof(passKey), "upPass%u", i);
+
+        String ssid = prefs.getString(ssidKey, "");
+        String pass = prefs.getString(passKey, "");
+        if (!ssid.isEmpty() && pass.length() <= 63) {
+            addOrUpdateSavedUpstreamNetwork(ssid, pass, true);
+        }
+    }
     dnsCfg.enabled         = prefs.getBool("dnsEn", false);
     copyStringToBuffer(dnsCfg.allowlist, sizeof(dnsCfg.allowlist), prefs.getString("dnsList", ""));
     prefs.end();
@@ -206,11 +476,102 @@ void saveConfig() {
     prefs.putBool("emDet",   cfg.emergencyDetection);
     prefs.putBool("cnMode",  cfg.chinaMode);
     prefs.putBool("upEn",    wifiCfg.enabled);
-    prefs.putString("upSsid", wifiCfg.ssid);
-    prefs.putString("upPass", wifiCfg.pass);
+    prefs.putUChar("upCnt",  wifiCfg.networkCount);
+    for (uint8_t i = 0; i < MAX_UPSTREAM_NETWORKS; ++i) {
+        char ssidKey[10];
+        char passKey[10];
+        snprintf(ssidKey, sizeof(ssidKey), "upSsid%u", i);
+        snprintf(passKey, sizeof(passKey), "upPass%u", i);
+        if (i < wifiCfg.networkCount) {
+            prefs.putString(ssidKey, wifiCfg.networks[i].ssid);
+            prefs.putString(passKey, wifiCfg.networks[i].pass);
+        } else {
+            prefs.remove(ssidKey);
+            prefs.remove(passKey);
+        }
+    }
     prefs.putBool("dnsEn",   dnsCfg.enabled);
     prefs.putString("dnsList", dnsCfg.allowlist);
     prefs.end();
+}
+
+String buildStatusJson() {
+    uint32_t uptime = (millis() - cfg.uptimeStart) / 1000;
+    bool upstreamConnected = WiFi.status() == WL_CONNECTED;
+    String activeSSID = jsonEscape(getActiveUpstreamSSID());
+    String connectedSSID = jsonEscape(getConnectedUpstreamSSID());
+    String apSSID = jsonEscape(String(AP_SSID));
+    String upstreamIP = upstreamConnected ? WiFi.localIP().toString() : "";
+    String apIP = WiFi.softAPIP().toString();
+    String upstreamStatus = jsonEscape(String(getUpstreamStatusText()));
+    String dnsAllowlist = jsonEscape(String(dnsCfg.allowlist));
+    String natStatus = jsonEscape(String(getNATStatusText()));
+    String savedNetworks = buildSavedUpstreamNetworksJson();
+    String json;
+
+    json.reserve(2200);
+    json += "{";
+    json += "\"rx\":";
+    json += String((unsigned)cfg.rxCount);
+    json += ",\"modified\":";
+    json += String((unsigned)cfg.modifiedCount);
+    json += ",\"errors\":";
+    json += String((unsigned)cfg.errorCount);
+    json += ",\"uptime\":";
+    json += String((unsigned)uptime);
+    json += ",\"canOK\":";
+    json += (cfg.canOK ? "true" : "false");
+    json += ",\"fsdTriggered\":";
+    json += (cfg.fsdTriggered ? "true" : "false");
+    json += ",\"fsdEnable\":";
+    json += String((int)cfg.fsdEnable);
+    json += ",\"hwMode\":";
+    json += String((int)cfg.hwMode);
+    json += ",\"speedProfile\":";
+    json += String((int)cfg.speedProfile);
+    json += ",\"profileMode\":";
+    json += String((int)cfg.profileModeAuto);
+    json += ",\"isaChime\":";
+    json += String((int)cfg.isaChimeSuppress);
+    json += ",\"emergencyDet\":";
+    json += String((int)cfg.emergencyDetection);
+    json += ",\"chinaMode\":";
+    json += String((int)cfg.chinaMode);
+    json += ",\"upstreamEnable\":";
+    json += String((int)wifiCfg.enabled);
+    json += ",\"upstreamConfigured\":";
+    json += String(hasUpstreamCredentials() ? 1 : 0);
+    json += ",\"upstreamConnected\":";
+    json += (upstreamConnected ? "true" : "false");
+    json += ",\"upstreamSSID\":\"";
+    json += activeSSID;
+    json += "\",\"connectedUpstreamSSID\":\"";
+    json += connectedSSID;
+    json += "\",\"upstreamSavedCount\":";
+    json += String((unsigned)wifiCfg.networkCount);
+    json += ",\"upstreamNetworks\":";
+    json += savedNetworks;
+    json += ",\"upstreamStatus\":\"";
+    json += upstreamStatus;
+    json += "\",\"upstreamIP\":\"";
+    json += jsonEscape(upstreamIP);
+    json += "\",\"apSSID\":\"";
+    json += apSSID;
+    json += "\",\"apIP\":\"";
+    json += jsonEscape(apIP);
+    json += "\",\"dnsWhitelistEnable\":";
+    json += String((int)dnsCfg.enabled);
+    json += ",\"dnsWhitelistCount\":";
+    json += String((unsigned)getDNSAllowlistCount());
+    json += ",\"dnsAllowlist\":\"";
+    json += dnsAllowlist;
+    json += "\",\"natEnabled\":";
+    json += String(natEnabled ? 1 : 0);
+    json += ",\"natStatus\":\"";
+    json += natStatus;
+    json += "\"";
+    json += "}";
+    return json;
 }
 
 // ═══════════════════════════════════════════
@@ -224,53 +585,92 @@ void setupWebServer() {
     });
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
-        uint32_t uptime = (millis() - cfg.uptimeStart) / 1000;
-        bool upstreamConnected = WiFi.status() == WL_CONNECTED;
-        String upstreamSSID = jsonEscape(String(wifiCfg.ssid));
-        String apSSID = jsonEscape(String(AP_SSID));
-        String upstreamIP = upstreamConnected ? WiFi.localIP().toString() : "";
-        String apIP = WiFi.softAPIP().toString();
-        String upstreamStatus = jsonEscape(String(getUpstreamStatusText()));
-        String dnsAllowlist = jsonEscape(String(dnsCfg.allowlist));
-        char buf[1400];
+        req->send(200, "application/json", buildStatusJson());
+    });
 
-        snprintf(buf, sizeof(buf),
-            "{\"rx\":%u,\"modified\":%u,\"errors\":%u,\"uptime\":%u,"
-            "\"canOK\":%s,\"fsdTriggered\":%s,"
-            "\"fsdEnable\":%d,\"hwMode\":%d,\"speedProfile\":%d,"
-            "\"profileMode\":%d,\"isaChime\":%d,\"emergencyDet\":%d,\"chinaMode\":%d,"
-            "\"upstreamEnable\":%d,\"upstreamConfigured\":%d,\"upstreamConnected\":%s,"
-            "\"upstreamSSID\":\"%s\",\"upstreamPassSet\":%d,\"upstreamStatus\":\"%s\",\"upstreamIP\":\"%s\","
-            "\"apSSID\":\"%s\",\"apIP\":\"%s\","
-            "\"dnsWhitelistEnable\":%d,\"dnsWhitelistCount\":%u,\"dnsAllowlist\":\"%s\","
-            "\"natEnabled\":%d,\"natStatus\":\"%s\"}",
-            (unsigned)cfg.rxCount, (unsigned)cfg.modifiedCount,
-            (unsigned)cfg.errorCount, (unsigned)uptime,
-            cfg.canOK ? "true" : "false",
-            cfg.fsdTriggered ? "true" : "false",
-            (int)cfg.fsdEnable,
-            (int)cfg.hwMode,
-            (int)cfg.speedProfile,
-            (int)cfg.profileModeAuto,
-            (int)cfg.isaChimeSuppress,
-            (int)cfg.emergencyDetection,
-            (int)cfg.chinaMode,
-            (int)wifiCfg.enabled,
-            hasUpstreamCredentials() ? 1 : 0,
-            upstreamConnected ? "true" : "false",
-            upstreamSSID.c_str(),
-            wifiCfg.pass[0] != '\0' ? 1 : 0,
-            upstreamStatus.c_str(),
-            upstreamIP.c_str(),
-            apSSID.c_str(),
-            apIP.c_str(),
-            (int)dnsCfg.enabled,
-            (unsigned)getDNSAllowlistCount(),
-            dnsAllowlist.c_str(),
-            natEnabled ? 1 : 0,
-            getNATStatusText()
-        );
-        req->send(200, "application/json", buf);
+    server.on("/api/upstream/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
+        UpstreamScanResult results[MAX_SCAN_RESULTS];
+        int resultCount = performUpstreamScan(results, MAX_SCAN_RESULTS);
+
+        if (resultCount < 0) {
+            req->send(409, "text/plain", "热点搜索忙，请稍后再试");
+            return;
+        }
+
+        String json = "{\"results\":[";
+        json.reserve(1200);
+
+        for (int i = 0; i < resultCount; ++i) {
+            if (i > 0) json += ",";
+            json += "{\"ssid\":\"";
+            json += jsonEscape(String(results[i].ssid));
+            json += "\",\"rssi\":";
+            json += String(results[i].rssi);
+            json += ",\"secure\":";
+            json += (results[i].secure ? "true" : "false");
+            json += ",\"saved\":";
+            json += (results[i].saved ? "true" : "false");
+            json += "}";
+        }
+
+        json += "]}";
+        req->send(200, "application/json", json);
+    });
+
+    server.on("/api/upstream/add", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!req->hasParam("ssid")) {
+            req->send(400, "text/plain", "缺少热点名称");
+            return;
+        }
+
+        String ssid = req->getParam("ssid")->value();
+        String pass = req->hasParam("pass") ? req->getParam("pass")->value() : "";
+        ssid.trim();
+
+        if (ssid.isEmpty()) {
+            req->send(400, "text/plain", "热点名称不能为空");
+            return;
+        }
+        if (ssid.length() > 32 || pass.length() > 63) {
+            req->send(400, "text/plain", "热点名称或密码长度不合法");
+            return;
+        }
+        if (isReservedUpstreamSSID(ssid)) {
+            req->send(400, "text/plain", "不能保存本机发射的热点");
+            return;
+        }
+        if (findSavedUpstreamNetwork(ssid) < 0 && wifiCfg.networkCount >= MAX_UPSTREAM_NETWORKS) {
+            req->send(400, "text/plain", "已达到可保存热点上限");
+            return;
+        }
+
+        bool overwritePass = req->hasParam("pass");
+        if (!addOrUpdateSavedUpstreamNetwork(ssid, pass, overwritePass)) {
+            req->send(400, "text/plain", "保存热点失败");
+            return;
+        }
+
+        saveConfig();
+        requestUpstreamApply();
+        req->send(200, "text/plain", "OK");
+    });
+
+    server.on("/api/upstream/delete", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!req->hasParam("ssid")) {
+            req->send(400, "text/plain", "缺少热点名称");
+            return;
+        }
+
+        String ssid = req->getParam("ssid")->value();
+        ssid.trim();
+        if (!removeSavedUpstreamNetwork(ssid)) {
+            req->send(404, "text/plain", "热点不存在");
+            return;
+        }
+
+        saveConfig();
+        requestUpstreamApply();
+        req->send(200, "text/plain", "OK");
     });
 
     server.on("/api/set", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -309,23 +709,6 @@ void setupWebServer() {
             wifiCfg.enabled = req->getParam("upstreamEnable")->value().toInt() != 0;
             changed = true;
             wifiChanged = true;
-        }
-        if (req->hasParam("upstreamSSID")) {
-            String value = req->getParam("upstreamSSID")->value();
-            value.trim();
-            if (value.length() <= 32) {
-                copyStringToBuffer(wifiCfg.ssid, sizeof(wifiCfg.ssid), value);
-                changed = true;
-                wifiChanged = true;
-            }
-        }
-        if (req->hasParam("upstreamPass")) {
-            String value = req->getParam("upstreamPass")->value();
-            if (value.length() <= 63) {
-                copyStringToBuffer(wifiCfg.pass, sizeof(wifiCfg.pass), value);
-                changed = true;
-                wifiChanged = true;
-            }
         }
         if (req->hasParam("dnsWhitelistEnable")) {
             dnsCfg.enabled = req->getParam("dnsWhitelistEnable")->value().toInt() != 0;

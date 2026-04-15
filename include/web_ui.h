@@ -31,11 +31,16 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
 .field-label{display:block;font-size:12px;color:#94a3b8;margin-bottom:8px;letter-spacing:.5px}
 .hint{font-size:12px;line-height:1.5;color:#94a3b8;margin-top:10px}
 .actions{display:flex;gap:10px;margin-top:14px}
-.save-btn,.upload-btn{background:#e31937;color:#fff;border:none;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;letter-spacing:.5px}
+.actions>button{flex:1}
+.save-btn,.upload-btn,.ghost-btn{border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;letter-spacing:.5px}
+.save-btn,.upload-btn{background:#e31937;color:#fff;border:none}
+.ghost-btn{background:#1e293b;color:#e2e8f0;border:1px solid #334155}
 .save-btn{width:100%}
 .upload-btn{width:100%;margin-top:10px}
-.save-btn:disabled,.upload-btn:disabled{opacity:.4;cursor:not-allowed}
+.ghost-btn.small-btn{padding:8px 12px;font-size:12px;flex:0 0 auto}
+.save-btn:disabled,.upload-btn:disabled,.ghost-btn:disabled{opacity:.4;cursor:not-allowed}
 .save-btn:hover:not(:disabled),.upload-btn:hover:not(:disabled){background:#c41530}
+.ghost-btn:hover:not(:disabled){background:#24324d}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
 .stat{background:#1a2740;border-radius:10px;padding:14px;text-align:center}
 .stat-val{font-size:28px;font-weight:800;color:#38bdf8}
@@ -58,6 +63,18 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
 .msg{text-align:center;font-size:12px;margin-top:8px;min-height:16px}
 .msg.ok{color:#22c55e}
 .msg.err{color:#ef4444}
+.inline-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.inline-actions .field-label{margin-bottom:0}
+.saved-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.saved-item{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#1a2740;border:1px solid #334155;border-radius:10px;padding:12px}
+.saved-main{min-width:0;flex:1}
+.saved-name{font-size:14px;font-weight:600;word-break:break-all}
+.saved-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.tag{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#273449;color:#94a3b8;font-size:11px;line-height:1}
+.tag.ok{background:rgba(34,197,94,.16);color:#86efac}
+.tag.busy{background:rgba(56,189,248,.16);color:#7dd3fc}
+.tag.warn{background:rgba(234,179,8,.16);color:#fde68a}
+.empty-box{border:1px dashed #334155;border-radius:10px;padding:12px;text-align:center;font-size:12px;color:#64748b}
 </style>
 </head>
 <body>
@@ -113,23 +130,32 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
   <div class="card-title">上游热点</div>
   <div class="row">
     <span class="row-label">启用手机热点接入</span>
-    <label class="toggle"><input type="checkbox" id="upstreamEnable" onchange="markNetworkDirty()"><span class="slider"></span></label>
+    <label class="toggle"><input type="checkbox" id="upstreamEnable" onchange="setUpstreamEnabled(this.checked)"><span class="slider"></span></label>
   </div>
   <div class="field">
-    <label class="field-label" for="upstreamSSID">iPhone 热点名称</label>
-    <input class="text-input" id="upstreamSSID" maxlength="32" placeholder="例如：我的 iPhone" oninput="markNetworkDirty()">
+    <div class="inline-actions">
+      <label class="field-label" for="scanResults">搜索附近热点</label>
+      <button class="ghost-btn small-btn" id="scanBtn" onclick="scanUpstreamNetworks()">搜索热点</button>
+    </div>
+    <select id="scanResults">
+      <option value="">点击“搜索热点”查看附近可用热点</option>
+    </select>
   </div>
   <div class="field">
     <label class="field-label" for="upstreamPass">热点密码</label>
-    <input class="text-input" type="password" id="upstreamPass" maxlength="63" placeholder="输入热点密码" oninput="markNetworkDirty()">
+    <input class="text-input" type="password" id="upstreamPass" maxlength="63" placeholder="首次添加或更新密码时填写">
   </div>
+  <div class="actions">
+    <button class="save-btn" onclick="saveSelectedUpstream()">保存选中热点</button>
+  </div>
+  <div class="hint">支持保存多个热点。设备会自动跳过本机发射的 AP，并在已保存热点里优先尝试当前能连上的那个。</div>
   <div class="hint">上游热点连通后，ESP32 会把本地 AP 的客户端流量做 NAT 转发到外网。</div>
   <div class="hint">如需配合 DNS 白名单，请让客户端保持默认 DNS，不要手动改成公网 DNS。</div>
-  <div class="actions">
-    <button class="save-btn" onclick="saveUpstream()">保存热点设置</button>
-  </div>
+  <div class="saved-list" id="savedNetworks"></div>
   <div class="msg" id="netMsg"></div>
   <div class="status-row"><span>上游状态</span><span id="sUpstream" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>当前热点</span><span id="sCurrentUpstream" class="status-no status-text status-wide">--</span></div>
+  <div class="status-row"><span>已保存热点</span><span id="sSavedUpstreams" class="status-no status-text">0</span></div>
   <div class="status-row"><span>上游 IP</span><span id="sUpstreamIP" class="status-no status-text">--</span></div>
   <div class="status-row"><span>NAT 转发</span><span id="sNAT" class="status-no status-text">--</span></div>
   <div class="status-row"><span>本地 AP</span><span id="sAP" class="status-ok status-text">--</span></div>
@@ -181,12 +207,9 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
 </div>
 
 <script>
-let networkDirty=false;
 let dnsDirty=false;
-
-function markNetworkDirty(){
-  networkDirty=true;
-}
+let scanResults=[];
+let pendingScanResultsRender=false;
 
 function markDnsDirty(){
   dnsDirty=true;
@@ -205,17 +228,125 @@ function setWideStatusText(id,text,className){
 }
 
 function syncNetworkForm(d){
-  if(networkDirty)return;
   document.getElementById('upstreamEnable').checked=!!d.upstreamEnable;
-  document.getElementById('upstreamSSID').value=d.upstreamSSID||'';
-  document.getElementById('upstreamPass').value='';
-  document.getElementById('upstreamPass').placeholder=d.upstreamPassSet?'留空则保留已存密码':'输入热点密码';
+  const savedNetworks=Array.isArray(d.upstreamNetworks)?d.upstreamNetworks:[];
+  let scanSavedStateChanged=false;
+  scanResults.forEach(net=>{
+    const nextSaved=savedNetworks.some(saved=>saved.ssid===net.ssid);
+    if(net.saved!==nextSaved){
+      net.saved=nextSaved;
+      scanSavedStateChanged=true;
+    }
+  });
+  if(scanSavedStateChanged){
+    refreshScanResultsSelect();
+  }
+  renderSavedNetworks(savedNetworks);
 }
 
 function syncDnsForm(d){
   if(dnsDirty)return;
   document.getElementById('dnsWhitelistEnable').checked=!!d.dnsWhitelistEnable;
   document.getElementById('dnsAllowlist').value=d.dnsAllowlist||'';
+}
+
+function setNetMessage(text,type){
+  const msg=document.getElementById('netMsg');
+  msg.textContent=text;
+  msg.className='msg'+(type?' '+type:'');
+}
+
+function renderScanResults(){
+  const select=document.getElementById('scanResults');
+  const current=select.value;
+  select.innerHTML='';
+
+  if(!scanResults.length){
+    const opt=document.createElement('option');
+    opt.value='';
+    opt.textContent='点击“搜索热点”查看附近可用热点';
+    select.appendChild(opt);
+    return;
+  }
+
+  const placeholder=document.createElement('option');
+  placeholder.value='';
+  placeholder.textContent='请选择要保存的热点';
+  select.appendChild(placeholder);
+
+  scanResults.forEach(net=>{
+    const opt=document.createElement('option');
+    opt.value=net.ssid;
+    let label=net.ssid;
+    if(typeof net.rssi==='number')label+=' · '+net.rssi+' dBm';
+    if(net.saved)label+=' · 已保存';
+    opt.textContent=label;
+    select.appendChild(opt);
+  });
+
+  if(scanResults.some(net=>net.ssid===current)){
+    select.value=current;
+  }
+}
+
+function refreshScanResultsSelect(force){
+  const select=document.getElementById('scanResults');
+  if(!force&&document.activeElement===select){
+    pendingScanResultsRender=true;
+    return;
+  }
+  pendingScanResultsRender=false;
+  renderScanResults();
+}
+
+function appendTag(parent,text,className){
+  const tag=document.createElement('span');
+  tag.className='tag'+(className?' '+className:'');
+  tag.textContent=text;
+  parent.appendChild(tag);
+}
+
+function renderSavedNetworks(networks){
+  const wrap=document.getElementById('savedNetworks');
+  wrap.innerHTML='';
+
+  if(!Array.isArray(networks)||!networks.length){
+    const empty=document.createElement('div');
+    empty.className='empty-box';
+    empty.textContent='还没有保存热点。先搜索附近热点，再保存需要自动连接的候选热点。';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  networks.forEach(net=>{
+    const item=document.createElement('div');
+    item.className='saved-item';
+
+    const main=document.createElement('div');
+    main.className='saved-main';
+
+    const name=document.createElement('div');
+    name.className='saved-name';
+    name.textContent=net.ssid;
+    main.appendChild(name);
+
+    const tags=document.createElement('div');
+    tags.className='saved-tags';
+    if(net.connected)appendTag(tags,'已连接','ok');
+    else if(net.active)appendTag(tags,'连接中','busy');
+    else appendTag(tags,'已保存','');
+    if(!net.hasPass)appendTag(tags,'无密码','warn');
+    main.appendChild(tags);
+
+    const delBtn=document.createElement('button');
+    delBtn.className='ghost-btn small-btn';
+    delBtn.textContent='删除';
+    delBtn.onclick=()=>deleteSavedUpstream(net.ssid);
+
+    item.appendChild(main);
+    item.appendChild(delBtn);
+    wrap.appendChild(item);
+  });
 }
 
 function poll(){
@@ -246,6 +377,8 @@ function poll(){
     syncNetworkForm(d);
     syncDnsForm(d);
     setStatusText('sUpstream',d.upstreamStatus||'--',d.upstreamConnected?'status-ok':(d.upstreamEnable?'status-err':'status-no'));
+    setWideStatusText('sCurrentUpstream',d.connectedUpstreamSSID||d.upstreamSSID||'--',d.upstreamConnected?'status-ok':'status-no');
+    setStatusText('sSavedUpstreams',String(d.upstreamSavedCount||0),d.upstreamSavedCount?'status-ok':'status-no');
     setStatusText('sUpstreamIP',d.upstreamIP||'--',d.upstreamConnected?'status-ok':'status-no');
     setStatusText('sNAT',d.natStatus||'--',d.natEnabled?'status-ok':(d.upstreamConnected?'status-err':'status-no'));
     setStatusText('sAP',d.apSSID||'--','status-ok');
@@ -259,32 +392,92 @@ function setVal(key,val){
   fetch('/api/set?'+key+'='+val).catch(()=>{});
 }
 
-function saveUpstream(){
-  const msg=document.getElementById('netMsg');
-  const params=new URLSearchParams();
-  const pass=document.getElementById('upstreamPass').value;
-
-  params.set('upstreamEnable',document.getElementById('upstreamEnable').checked?'1':'0');
-  params.set('upstreamSSID',document.getElementById('upstreamSSID').value.trim());
-  if(pass)params.set('upstreamPass',pass);
-
-  msg.textContent='保存中...';
-  msg.className='msg';
-
-  fetch('/api/set?'+params.toString()).then(r=>{
+function setUpstreamEnabled(enabled){
+  setNetMessage('保存中...','');
+  fetch('/api/set?upstreamEnable='+(enabled?'1':'0')).then(r=>{
     if(!r.ok)throw new Error('save failed');
     return r.text();
   }).then(()=>{
-    networkDirty=false;
-    document.getElementById('upstreamPass').value='';
-    msg.textContent='热点设置已保存';
-    msg.className='msg ok';
+    setNetMessage(enabled?'热点接入已启用':'热点接入已关闭','ok');
     poll();
   }).catch(()=>{
-    msg.textContent='保存失败';
-    msg.className='msg err';
+    setNetMessage('保存失败','err');
+    poll();
   });
 }
+
+function scanUpstreamNetworks(){
+  const btn=document.getElementById('scanBtn');
+  btn.disabled=true;
+  setNetMessage('搜索中...','');
+
+  fetch('/api/upstream/scan').then(r=>{
+    if(!r.ok){
+      return r.text().then(t=>{throw new Error(t||'scan failed');});
+    }
+    return r.json();
+  }).then(d=>{
+    scanResults=Array.isArray(d.results)?d.results:[];
+    refreshScanResultsSelect(true);
+    setNetMessage(scanResults.length?'已更新附近热点':'没有搜索到可用热点','ok');
+  }).catch(err=>{
+    setNetMessage(err.message||'搜索失败','err');
+  }).finally(()=>{
+    btn.disabled=false;
+  });
+}
+
+function saveSelectedUpstream(){
+  const ssid=document.getElementById('scanResults').value;
+  const pass=document.getElementById('upstreamPass').value;
+
+  if(!ssid){
+    setNetMessage('请先选择要保存的热点','err');
+    return;
+  }
+
+  const params=new URLSearchParams();
+  params.set('ssid',ssid);
+  if(pass)params.set('pass',pass);
+
+  setNetMessage('保存中...','');
+
+  fetch('/api/upstream/add?'+params.toString()).then(r=>{
+    if(!r.ok){
+      return r.text().then(t=>{throw new Error(t||'save failed');});
+    }
+    return r.text();
+  }).then(()=>{
+    document.getElementById('upstreamPass').value='';
+    setNetMessage(document.getElementById('upstreamEnable').checked?'热点已保存，设备会自动切换到可连接的热点':'热点已保存，启用后会自动连接','ok');
+    poll();
+  }).catch(err=>{
+    setNetMessage(err.message||'保存失败','err');
+  });
+}
+
+function deleteSavedUpstream(ssid){
+  if(!window.confirm('确定删除这个已保存热点吗？'))return;
+
+  setNetMessage('删除中...','');
+  fetch('/api/upstream/delete?ssid='+encodeURIComponent(ssid)).then(r=>{
+    if(!r.ok){
+      return r.text().then(t=>{throw new Error(t||'delete failed');});
+    }
+    return r.text();
+  }).then(()=>{
+    setNetMessage('已删除热点','ok');
+    poll();
+  }).catch(err=>{
+    setNetMessage(err.message||'删除失败','err');
+  });
+}
+
+document.getElementById('scanResults').addEventListener('blur',()=>{
+  if(pendingScanResultsRender){
+    refreshScanResultsSelect(true);
+  }
+});
 
 function saveDns(){
   const msg=document.getElementById('dnsMsg');
