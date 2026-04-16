@@ -10,7 +10,6 @@ extern "C" {
 
 void dnsIpPolicyService(const char* allowlistRules, const char* blocklistRules, int rulesEnabled, int upstreamReady);
 void dnsIpBlockerRememberDomain(const char* domain, int upstreamReady);
-void dnsIpPolicyRememberAllowedIp(const char* domain, uint32_t ipHostOrder);
 void dnsIpBlockerClear(void);
 int dnsHookIp4CanForward(uint32_t destAddrHostOrder);
 

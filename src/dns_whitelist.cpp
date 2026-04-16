@@ -11,6 +11,7 @@ constexpr uint16_t kDnsTypeA = 1;
 constexpr uint16_t kDnsTypeAAAA = 28;
 constexpr uint16_t kDnsClassIN = 1;
 constexpr uint32_t kDnsTtlSeconds = 60;
+constexpr uint32_t kDnsForwardTimeoutMs = 1200;
 portMUX_TYPE gDnsBlockedLogMux = portMUX_INITIALIZER_UNLOCKED;
 
 uint16_t readU16(const uint8_t* ptr) {
@@ -77,6 +78,19 @@ bool DNSWhitelistServer::parseDomainName(const uint8_t* query, size_t length, si
         first = false;
     }
 
+    return false;
+}
+
+bool DNSWhitelistServer::skipDomainName(const uint8_t* packet, size_t length, size_t& offset) const {
+    while (offset < length) {
+        uint8_t labelLength = packet[offset++];
+        if (labelLength == 0) return true;
+        if ((labelLength & 0xC0) == 0xC0) {
+            return offset < length;
+        }
+        if ((labelLength & 0xC0) != 0 || offset + labelLength > length) return false;
+        offset += labelLength;
+    }
     return false;
 }
 
@@ -154,6 +168,72 @@ void DNSWhitelistServer::logBlockedRequest(const String& domain) {
     }
     ++totalBlockedCount_;
     portEXIT_CRITICAL(&gDnsBlockedLogMux);
+}
+
+bool DNSWhitelistServer::forwardUpstreamQuery(const uint8_t* query, size_t queryLength, uint8_t* response, size_t responseCapacity, size_t& responseLength) {
+    responseLength = 0;
+    if (query == nullptr || response == nullptr || queryLength == 0 || responseCapacity == 0) return false;
+
+    IPAddress dnsServerIP = WiFi.dnsIP(0);
+    if (dnsServerIP == IPAddress(0, 0, 0, 0)) return false;
+
+    upstreamUdp_.stop();
+    if (upstreamUdp_.begin(0) != 1) return false;
+
+    bool success = false;
+    do {
+        if (!upstreamUdp_.beginPacket(dnsServerIP, 53)) break;
+        if (upstreamUdp_.write(query, queryLength) != queryLength) break;
+        if (!upstreamUdp_.endPacket()) break;
+
+        uint32_t start = millis();
+        while (millis() - start < kDnsForwardTimeoutMs) {
+            int packetSize = upstreamUdp_.parsePacket();
+            if (packetSize <= 0) {
+                delay(5);
+                continue;
+            }
+            if (packetSize > static_cast<int>(responseCapacity)) break;
+            int read = upstreamUdp_.read(response, packetSize);
+            if (read > 0) {
+                responseLength = static_cast<size_t>(read);
+                success = true;
+            }
+            break;
+        }
+    } while (false);
+
+    upstreamUdp_.stop();
+    return success;
+}
+
+void DNSWhitelistServer::cacheAllowedAddressesFromResponse(const String& domain, const uint8_t* response, size_t responseLength) {
+    if (response == nullptr || responseLength < kDnsHeaderSize) return;
+
+    uint16_t qdCount = readU16(response + 4);
+    uint16_t anCount = readU16(response + 6);
+    size_t offset = kDnsHeaderSize;
+
+    for (uint16_t i = 0; i < qdCount; ++i) {
+        if (!skipDomainName(response, responseLength, offset) || offset + 4 > responseLength) return;
+        offset += 4;
+    }
+
+    for (uint16_t i = 0; i < anCount; ++i) {
+        if (!skipDomainName(response, responseLength, offset) || offset + 10 > responseLength) return;
+
+        uint16_t rrType = readU16(response + offset);
+        uint16_t rrClass = readU16(response + offset + 2);
+        uint16_t rdLength = readU16(response + offset + 8);
+        offset += 10;
+
+        if (offset + rdLength > responseLength) return;
+
+        if (rrType == kDnsTypeA && rrClass == kDnsClassIN && rdLength == 4) {
+            (void)domain;
+        }
+        offset += rdLength;
+    }
 }
 
 size_t DNSWhitelistServer::copyBlockedDomains(DNSBlockedDomainStatEntry* dest, size_t maxEntries, uint32_t& totalBlockedCount) {
@@ -318,24 +398,23 @@ void DNSWhitelistServer::processNextRequest(const DNSFilterConfig& cfg, bool ups
         return;
     }
 
-    if (qType == kDnsTypeAAAA) {
-        sendNoAnswerResponse(query, questionEnd, requestFlags);
+    uint8_t upstreamResponse[512] = {};
+    size_t upstreamResponseLength = 0;
+    if (forwardUpstreamQuery(query, read, upstreamResponse, sizeof(upstreamResponse), upstreamResponseLength)) {
+        cacheAllowedAddressesFromResponse(domain, upstreamResponse, upstreamResponseLength);
+        udp_.beginPacket(udp_.remoteIP(), udp_.remotePort());
+        udp_.write(upstreamResponse, upstreamResponseLength);
+        udp_.endPacket();
         return;
     }
 
     if (qType != kDnsTypeA) {
-        sendErrorResponse(query, questionEnd, requestFlags, 4);
+        sendNoAnswerResponse(query, questionEnd, requestFlags);
         return;
     }
 
     IPAddress resolved;
     if (WiFi.hostByName(domain.c_str(), resolved) == 1) {
-        uint32_t ipHostOrder =
-            (static_cast<uint32_t>(resolved[0]) << 24) |
-            (static_cast<uint32_t>(resolved[1]) << 16) |
-            (static_cast<uint32_t>(resolved[2]) << 8) |
-            static_cast<uint32_t>(resolved[3]);
-        dnsIpPolicyRememberAllowedIp(domain.c_str(), ipHostOrder);
         sendIPv4Answer(query, questionEnd, requestFlags, resolved);
     } else {
         sendErrorResponse(query, questionEnd, requestFlags, 3);

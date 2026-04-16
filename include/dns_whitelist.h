@@ -29,6 +29,7 @@ class DNSWhitelistServer {
 
   private:
     WiFiUDP udp_;
+    WiFiUDP upstreamUdp_;
     bool started_ = false;
     DNSBlockedDomainStatEntry blockedDomains_[kDnsBlockedDomainCapacity];
     size_t blockedDomainCount_ = 0;
@@ -36,10 +37,13 @@ class DNSWhitelistServer {
 
     String normalizeDomain(const String& domain) const;
     bool parseDomainName(const uint8_t* query, size_t length, size_t& offset, String& domain) const;
+    bool skipDomainName(const uint8_t* packet, size_t length, size_t& offset) const;
     bool hasDomainRules(const char* rules) const;
     bool listContainsDomain(const char* rules, const String& domain) const;
     bool isAllowedDomain(const DNSFilterConfig& cfg, const String& domain) const;
     void logBlockedRequest(const String& domain);
+    bool forwardUpstreamQuery(const uint8_t* query, size_t queryLength, uint8_t* response, size_t responseCapacity, size_t& responseLength);
+    void cacheAllowedAddressesFromResponse(const String& domain, const uint8_t* response, size_t responseLength);
     void sendBlockedResponse(const uint8_t* query, size_t questionEnd, uint16_t requestFlags, uint16_t qType);
     void sendErrorResponse(const uint8_t* query, size_t questionEnd, uint16_t requestFlags, uint16_t rcode);
     void sendNoAnswerResponse(const uint8_t* query, size_t questionEnd, uint16_t requestFlags);

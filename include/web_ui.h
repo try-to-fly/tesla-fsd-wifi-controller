@@ -218,7 +218,7 @@ body{padding:12px}
     <textarea class="text-input text-area" id="dnsBlocklist" maxlength="384" placeholder="每行一个域名，例如：&#10;google.com&#10;doubleclick.net" oninput="markDnsDirty()"></textarea>
   </div>
   <div class="hint">支持逗号、空格或换行分隔。填写 `tesla.com` 会同时允许 `api.tesla.com` 这类子域名。</div>
-  <div class="hint">黑名单优先于白名单。若白名单留空，则表示“除黑名单外全部放行”；白名单非空时，会启用严格白名单模式，缓存 IP 也会在转发层被限制。</div>
+  <div class="hint">黑名单优先于白名单。若白名单留空，则表示“除黑名单外全部放行”；白名单非空时，只允许解析白名单域名。</div>
   <div class="hint">这项规则只影响连到 ESP32 本地 AP 且把 ESP32 当成 DNS 的设备；命中黑名单或未命中白名单的域名会被拒绝。</div>
   <div class="actions">
     <button class="save-btn" onclick="saveDns()">保存 DNS 规则</button>
