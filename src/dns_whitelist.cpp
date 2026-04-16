@@ -1,4 +1,5 @@
 #include "dns_whitelist.h"
+#include "dns_ip_blocker.h"
 
 #include <cctype>
 #include <cstring>
@@ -79,11 +80,25 @@ bool DNSWhitelistServer::parseDomainName(const uint8_t* query, size_t length, si
     return false;
 }
 
-bool DNSWhitelistServer::isAllowedDomain(const DNSFilterConfig& cfg, const String& domain) const {
-    if (!cfg.enabled) return true;
-    if (domain.isEmpty()) return false;
+bool DNSWhitelistServer::hasDomainRules(const char* rules) const {
+    if (rules == nullptr) return false;
 
-    const char* cursor = cfg.allowlist;
+    const char* cursor = rules;
+    while (*cursor) {
+        while (*cursor && (isspace(static_cast<unsigned char>(*cursor)) || *cursor == ',' || *cursor == ';')) {
+            ++cursor;
+        }
+        if (!*cursor) break;
+        return true;
+    }
+
+    return false;
+}
+
+bool DNSWhitelistServer::listContainsDomain(const char* rules, const String& domain) const {
+    if (rules == nullptr || domain.isEmpty()) return false;
+
+    const char* cursor = rules;
     while (*cursor) {
         while (*cursor && (isspace(static_cast<unsigned char>(*cursor)) || *cursor == ',' || *cursor == ';')) {
             ++cursor;
@@ -103,59 +118,81 @@ bool DNSWhitelistServer::isAllowedDomain(const DNSFilterConfig& cfg, const Strin
     return false;
 }
 
-String DNSWhitelistServer::formatQueryType(uint16_t qType) const {
-    switch (qType) {
-        case kDnsTypeA:    return "A";
-        case kDnsTypeAAAA: return "AAAA";
-        default:           return String("TYPE") + qType;
-    }
+bool DNSWhitelistServer::isAllowedDomain(const DNSFilterConfig& cfg, const String& domain) const {
+    if (!cfg.enabled) return true;
+    if (domain.isEmpty()) return false;
+
+    if (listContainsDomain(cfg.blocklist, domain)) return false;
+    if (!hasDomainRules(cfg.allowlist)) return true;
+
+    return listContainsDomain(cfg.allowlist, domain);
 }
 
-void DNSWhitelistServer::logBlockedRequest(const String& domain, uint16_t qType) {
-    DNSBlockedRequestLogEntry entry = {};
+void DNSWhitelistServer::logBlockedRequest(const String& domain) {
     String normalizedDomain = normalizeDomain(domain);
-    String typeText = formatQueryType(qType);
-    String clientIP = udp_.remoteIP().toString();
+    if (normalizedDomain.isEmpty()) return;
 
-    normalizedDomain.toCharArray(entry.domain, sizeof(entry.domain));
-    clientIP.toCharArray(entry.clientIP, sizeof(entry.clientIP));
-    typeText.toCharArray(entry.qType, sizeof(entry.qType));
-    entry.blockedAtUptimeSeconds = millis() / 1000;
+    uint32_t blockedAtUptimeSeconds = millis() / 1000;
 
     portENTER_CRITICAL(&gDnsBlockedLogMux);
-    blockedRequests_[blockedRequestHead_] = entry;
-    blockedRequestHead_ = (blockedRequestHead_ + 1) % kDnsBlockedLogCapacity;
-    if (blockedRequestCount_ < kDnsBlockedLogCapacity) {
-        ++blockedRequestCount_;
+    bool found = false;
+    for (size_t i = 0; i < blockedDomainCount_; ++i) {
+        if (normalizedDomain.equals(blockedDomains_[i].domain)) {
+            ++blockedDomains_[i].count;
+            blockedDomains_[i].lastBlockedAtUptimeSeconds = blockedAtUptimeSeconds;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found && blockedDomainCount_ < kDnsBlockedDomainCapacity) {
+        DNSBlockedDomainStatEntry entry = {};
+        normalizedDomain.toCharArray(entry.domain, sizeof(entry.domain));
+        entry.count = 1;
+        entry.lastBlockedAtUptimeSeconds = blockedAtUptimeSeconds;
+        blockedDomains_[blockedDomainCount_++] = entry;
     }
     ++totalBlockedCount_;
     portEXIT_CRITICAL(&gDnsBlockedLogMux);
 }
 
-size_t DNSWhitelistServer::copyBlockedRequests(DNSBlockedRequestLogEntry* dest, size_t maxEntries, uint32_t& totalBlockedCount) {
+size_t DNSWhitelistServer::copyBlockedDomains(DNSBlockedDomainStatEntry* dest, size_t maxEntries, uint32_t& totalBlockedCount) {
     totalBlockedCount = 0;
     if (dest == nullptr || maxEntries == 0) return 0;
 
     portENTER_CRITICAL(&gDnsBlockedLogMux);
     totalBlockedCount = totalBlockedCount_;
-    size_t count = blockedRequestCount_ < maxEntries ? blockedRequestCount_ : maxEntries;
+    size_t count = blockedDomainCount_ < maxEntries ? blockedDomainCount_ : maxEntries;
 
     for (size_t i = 0; i < count; ++i) {
-        size_t index = (blockedRequestHead_ + kDnsBlockedLogCapacity - 1 - i) % kDnsBlockedLogCapacity;
-        dest[i] = blockedRequests_[index];
+        dest[i] = blockedDomains_[i];
     }
     portEXIT_CRITICAL(&gDnsBlockedLogMux);
+
+    for (size_t i = 0; i < count; ++i) {
+        size_t bestIndex = i;
+        for (size_t j = i + 1; j < count; ++j) {
+            if (dest[j].count < dest[bestIndex].count ||
+                (dest[j].count == dest[bestIndex].count && strcmp(dest[j].domain, dest[bestIndex].domain) < 0)) {
+                bestIndex = j;
+            }
+        }
+        if (bestIndex != i) {
+            DNSBlockedDomainStatEntry tmp = dest[i];
+            dest[i] = dest[bestIndex];
+            dest[bestIndex] = tmp;
+        }
+    }
 
     return count;
 }
 
 void DNSWhitelistServer::clearBlockedRequests() {
     portENTER_CRITICAL(&gDnsBlockedLogMux);
-    for (size_t i = 0; i < kDnsBlockedLogCapacity; ++i) {
-        blockedRequests_[i] = DNSBlockedRequestLogEntry{};
+    for (size_t i = 0; i < kDnsBlockedDomainCapacity; ++i) {
+        blockedDomains_[i] = DNSBlockedDomainStatEntry{};
     }
-    blockedRequestCount_ = 0;
-    blockedRequestHead_ = 0;
+    blockedDomainCount_ = 0;
     totalBlockedCount_ = 0;
     portEXIT_CRITICAL(&gDnsBlockedLogMux);
 }
@@ -181,6 +218,17 @@ void DNSWhitelistServer::sendErrorResponse(const uint8_t* query, size_t question
 
 void DNSWhitelistServer::sendNoAnswerResponse(const uint8_t* query, size_t questionEnd, uint16_t requestFlags) {
     sendErrorResponse(query, questionEnd, requestFlags, 0);
+}
+
+void DNSWhitelistServer::sendBlockedResponse(const uint8_t* query, size_t questionEnd, uint16_t requestFlags, uint16_t qType) {
+    if (qType == kDnsTypeA) {
+        sendIPv4Answer(query, questionEnd, requestFlags, IPAddress(0, 0, 0, 0));
+        return;
+    }
+
+    // Return a successful empty answer instead of REFUSED to reduce client fallback
+    // to alternate DNS paths when a domain is intentionally blocked.
+    sendNoAnswerResponse(query, questionEnd, requestFlags);
 }
 
 void DNSWhitelistServer::sendIPv4Answer(const uint8_t* query, size_t questionEnd, uint16_t requestFlags, const IPAddress& ip) {
@@ -259,8 +307,9 @@ void DNSWhitelistServer::processNextRequest(const DNSFilterConfig& cfg, bool ups
     }
 
     if (!isAllowedDomain(cfg, domain)) {
-        logBlockedRequest(domain, qType);
-        sendErrorResponse(query, questionEnd, requestFlags, 5);
+        logBlockedRequest(domain);
+        dnsIpBlockerRememberDomain(domain.c_str(), upstreamReady ? 1 : 0);
+        sendBlockedResponse(query, questionEnd, requestFlags, qType);
         return;
     }
 
@@ -281,6 +330,12 @@ void DNSWhitelistServer::processNextRequest(const DNSFilterConfig& cfg, bool ups
 
     IPAddress resolved;
     if (WiFi.hostByName(domain.c_str(), resolved) == 1) {
+        uint32_t ipHostOrder =
+            (static_cast<uint32_t>(resolved[0]) << 24) |
+            (static_cast<uint32_t>(resolved[1]) << 16) |
+            (static_cast<uint32_t>(resolved[2]) << 8) |
+            static_cast<uint32_t>(resolved[3]);
+        dnsIpPolicyRememberAllowedIp(domain.c_str(), ipHostOrder);
         sendIPv4Answer(query, questionEnd, requestFlags, resolved);
     } else {
         sendErrorResponse(query, questionEnd, requestFlags, 3);

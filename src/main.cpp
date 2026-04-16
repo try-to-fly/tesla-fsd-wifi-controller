@@ -8,6 +8,7 @@
 
 #include <Arduino.h>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -18,6 +19,7 @@
 
 #include "can_frame_types.h"
 #include "dns_whitelist.h"
+#include "dns_ip_blocker.h"
 #include "drivers/twai_driver.h"
 #include "handlers.h"
 #include "web_ui.h"
@@ -30,8 +32,17 @@ static const IPAddress AP_GATEWAY(192, 168, 4, 1);
 static const IPAddress AP_SUBNET(255, 255, 255, 0);
 static constexpr uint32_t UPSTREAM_RETRY_MS = 15000;
 static constexpr uint32_t UPSTREAM_FAILURE_RETRY_MS = 3000;
+static constexpr uint32_t UPSTREAM_RETRY_THROTTLED_MS = 60000;
 static constexpr uint8_t MAX_UPSTREAM_NETWORKS = 10;
 static constexpr uint8_t MAX_SCAN_RESULTS = 12;
+static constexpr uint32_t THERMAL_SAMPLE_MS = 5000;
+static constexpr float CHIP_TEMP_WARN_C = 65.0f;
+static constexpr float CHIP_TEMP_THROTTLE_C = 75.0f;
+static constexpr float CHIP_TEMP_PROTECT_C = 80.0f;
+static constexpr float CHIP_TEMP_WARN_CLEAR_C = 62.0f;
+static constexpr float CHIP_TEMP_THROTTLE_CLEAR_C = 72.0f;
+static constexpr float CHIP_TEMP_PROTECT_CLEAR_C = 72.0f;
+static constexpr float CHIP_TEMP_EMA_ALPHA = 0.25f;
 
 // ── Globals ──
 static TWAIDriver     canDriver;
@@ -67,6 +78,22 @@ static UpstreamWiFiConfig wifiCfg;
 static volatile bool upstreamScanInProgress = false;
 
 static DNSFilterConfig dnsCfg;
+
+enum class ThermalLevel : uint8_t {
+    Normal = 0,
+    Warning,
+    Throttled,
+    Protect
+};
+
+struct ThermalStatus {
+    float currentC = NAN;
+    float averageC = NAN;
+    uint32_t lastSampleMillis = 0;
+    ThermalLevel level = ThermalLevel::Normal;
+};
+
+static ThermalStatus thermalStatus;
 
 #ifndef PIN_LED
 #define PIN_LED 2   // ESP32 DevKit onboard LED
@@ -219,23 +246,21 @@ String buildSavedUpstreamNetworksJson() {
 }
 
 String buildBlockedDnsRequestsJson(uint32_t& totalBlockedCount, size_t& recentBlockedCount) {
-    DNSBlockedRequestLogEntry entries[kDnsBlockedLogCapacity];
+    DNSBlockedDomainStatEntry entries[kDnsBlockedDomainCapacity];
     totalBlockedCount = 0;
-    recentBlockedCount = dnsServer.copyBlockedRequests(entries, kDnsBlockedLogCapacity, totalBlockedCount);
+    recentBlockedCount = dnsServer.copyBlockedDomains(entries, kDnsBlockedDomainCapacity, totalBlockedCount);
 
     String json = "[";
-    json.reserve(recentBlockedCount * 160 + 2);
+    json.reserve(recentBlockedCount * 96 + 2);
 
     for (size_t i = 0; i < recentBlockedCount; ++i) {
         if (i > 0) json += ",";
         json += "{\"domain\":\"";
         json += jsonEscape(String(entries[i].domain));
-        json += "\",\"clientIP\":\"";
-        json += jsonEscape(String(entries[i].clientIP));
-        json += "\",\"qType\":\"";
-        json += jsonEscape(String(entries[i].qType));
-        json += "\",\"blockedAt\":";
-        json += String(entries[i].blockedAtUptimeSeconds);
+        json += "\",\"count\":";
+        json += String(entries[i].count);
+        json += ",\"lastBlockedAt\":";
+        json += String(entries[i].lastBlockedAtUptimeSeconds);
         json += "}";
     }
 
@@ -327,9 +352,11 @@ int selectNextUpstreamNetworkIndex() {
     return selectedIndex;
 }
 
-uint8_t getDNSAllowlistCount() {
+uint8_t getDNSRuleCount(const char* rules) {
     uint8_t count = 0;
-    const char* cursor = dnsCfg.allowlist;
+    if (rules == nullptr) return 0;
+
+    const char* cursor = rules;
 
     while (*cursor) {
         while (*cursor && (isspace(static_cast<unsigned char>(*cursor)) || *cursor == ',' || *cursor == ';')) {
@@ -345,9 +372,101 @@ uint8_t getDNSAllowlistCount() {
     return count;
 }
 
+const char* getThermalStatusText() {
+    switch (thermalStatus.level) {
+        case ThermalLevel::Warning:   return "温度偏高";
+        case ThermalLevel::Throttled: return "高温降频";
+        case ThermalLevel::Protect:   return "过热保护中";
+        case ThermalLevel::Normal:
+        default:
+            return "正常";
+    }
+}
+
+bool isThermalProtectionActive() {
+    return thermalStatus.level == ThermalLevel::Protect;
+}
+
+bool isThermalThrottleActive() {
+    return thermalStatus.level == ThermalLevel::Throttled || thermalStatus.level == ThermalLevel::Protect;
+}
+
+void updateThermalLevel() {
+    if (!std::isfinite(thermalStatus.averageC)) {
+        thermalStatus.level = ThermalLevel::Normal;
+        return;
+    }
+
+    ThermalLevel previousLevel = thermalStatus.level;
+    ThermalLevel nextLevel = previousLevel;
+    float avgC = thermalStatus.averageC;
+
+    switch (previousLevel) {
+        case ThermalLevel::Protect:
+            if (avgC <= CHIP_TEMP_PROTECT_CLEAR_C) {
+                if (avgC >= CHIP_TEMP_THROTTLE_C) nextLevel = ThermalLevel::Throttled;
+                else if (avgC >= CHIP_TEMP_WARN_C) nextLevel = ThermalLevel::Warning;
+                else nextLevel = ThermalLevel::Normal;
+            }
+            break;
+        case ThermalLevel::Throttled:
+            if (avgC >= CHIP_TEMP_PROTECT_C) nextLevel = ThermalLevel::Protect;
+            else if (avgC <= CHIP_TEMP_THROTTLE_CLEAR_C) {
+                nextLevel = avgC >= CHIP_TEMP_WARN_C ? ThermalLevel::Warning : ThermalLevel::Normal;
+            }
+            break;
+        case ThermalLevel::Warning:
+            if (avgC >= CHIP_TEMP_PROTECT_C) nextLevel = ThermalLevel::Protect;
+            else if (avgC >= CHIP_TEMP_THROTTLE_C) nextLevel = ThermalLevel::Throttled;
+            else if (avgC <= CHIP_TEMP_WARN_CLEAR_C) nextLevel = ThermalLevel::Normal;
+            break;
+        case ThermalLevel::Normal:
+        default:
+            if (avgC >= CHIP_TEMP_PROTECT_C) nextLevel = ThermalLevel::Protect;
+            else if (avgC >= CHIP_TEMP_THROTTLE_C) nextLevel = ThermalLevel::Throttled;
+            else if (avgC >= CHIP_TEMP_WARN_C) nextLevel = ThermalLevel::Warning;
+            break;
+    }
+
+    if (nextLevel != previousLevel) {
+        thermalStatus.level = nextLevel;
+        Serial.printf(
+            "Thermal state changed: %s (current=%.1fC avg=%.1fC)\n",
+            getThermalStatusText(),
+            thermalStatus.currentC,
+            thermalStatus.averageC
+        );
+    }
+}
+
+void serviceThermalStatus() {
+    uint32_t now = millis();
+    if (thermalStatus.lastSampleMillis != 0 && now - thermalStatus.lastSampleMillis < THERMAL_SAMPLE_MS) {
+        return;
+    }
+
+    thermalStatus.lastSampleMillis = now;
+    float currentC = temperatureRead();
+    if (!std::isfinite(currentC) || currentC < -40.0f || currentC > 125.0f) {
+        return;
+    }
+
+    thermalStatus.currentC = currentC;
+    if (std::isfinite(thermalStatus.averageC)) {
+        thermalStatus.averageC =
+            (thermalStatus.averageC * (1.0f - CHIP_TEMP_EMA_ALPHA)) +
+            (currentC * CHIP_TEMP_EMA_ALPHA);
+    } else {
+        thermalStatus.averageC = currentC;
+    }
+
+    updateThermalLevel();
+}
+
 const char* getUpstreamStatusText() {
     if (!wifiCfg.enabled)          return "未启用";
     if (!hasUpstreamCredentials()) return "未配置热点";
+    if (isThermalProtectionActive()) return "过热保护中";
 
     switch (WiFi.status()) {
         case WL_CONNECTED:       return "已连接";
@@ -365,6 +484,13 @@ const char* getNATStatusText() {
     if (natEnabled) return "已启用";
     if (WiFi.status() == WL_CONNECTED) return "待启用";
     return "未连接上游";
+}
+
+const char* getUpstreamSignalText(int32_t rssi) {
+    if (rssi >= -55) return "优秀";
+    if (rssi >= -67) return "良好";
+    if (rssi >= -75) return "一般";
+    return "较弱";
 }
 
 void requestUpstreamApply() {
@@ -397,6 +523,15 @@ void startUpstreamConnect() {
 }
 
 void applyUpstreamWiFiConfig() {
+    if (isThermalProtectionActive()) {
+        WiFi.disconnect(false, true);
+        wifiCfg.activeIndex = -1;
+        wifiCfg.nextTryIndex = 0;
+        wifiCfg.lastAttemptMillis = 0;
+        Serial.println("Upstream WiFi paused by thermal protection");
+        return;
+    }
+
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) {
         WiFi.disconnect(false, true);
         wifiCfg.activeIndex = -1;
@@ -420,6 +555,15 @@ void serviceUpstreamWiFi() {
     }
 
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
+    if (isThermalProtectionActive()) {
+        if (WiFi.status() == WL_CONNECTED) {
+            WiFi.disconnect(false, true);
+            wifiCfg.activeIndex = -1;
+            wifiCfg.lastAttemptMillis = 0;
+            Serial.println("Upstream WiFi disconnected due to thermal protection");
+        }
+        return;
+    }
     if (WiFi.status() == WL_CONNECTED) {
         int connectedIndex = findSavedUpstreamNetwork(WiFi.SSID());
         if (connectedIndex >= 0) {
@@ -438,6 +582,11 @@ void serviceUpstreamWiFi() {
         } else {
             shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_MS;
         }
+        if (!shouldRetry && isThermalThrottleActive()) {
+            shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_THROTTLED_MS;
+        }
+    } else if (isThermalThrottleActive()) {
+        shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_THROTTLED_MS;
     }
 
     if (shouldRetry) {
@@ -484,6 +633,7 @@ void loadConfig() {
     }
     dnsCfg.enabled         = prefs.getBool("dnsEn", false);
     copyStringToBuffer(dnsCfg.allowlist, sizeof(dnsCfg.allowlist), prefs.getString("dnsList", ""));
+    copyStringToBuffer(dnsCfg.blocklist, sizeof(dnsCfg.blocklist), prefs.getString("dnsBlk", ""));
     prefs.end();
 
     // Clamp values
@@ -517,27 +667,34 @@ void saveConfig() {
     }
     prefs.putBool("dnsEn",   dnsCfg.enabled);
     prefs.putString("dnsList", dnsCfg.allowlist);
+    prefs.putString("dnsBlk", dnsCfg.blocklist);
     prefs.end();
 }
 
 String buildStatusJson() {
     uint32_t uptime = (millis() - cfg.uptimeStart) / 1000;
     bool upstreamConnected = WiFi.status() == WL_CONNECTED;
+    int32_t upstreamRSSI = upstreamConnected ? WiFi.RSSI() : 0;
+    int32_t wifiChannel = WiFi.channel();
+    int32_t apClientCount = WiFi.softAPgetStationNum();
     String activeSSID = jsonEscape(getActiveUpstreamSSID());
     String connectedSSID = jsonEscape(getConnectedUpstreamSSID());
     String apSSID = jsonEscape(String(AP_SSID));
     String upstreamIP = upstreamConnected ? WiFi.localIP().toString() : "";
     String apIP = WiFi.softAPIP().toString();
     String upstreamStatus = jsonEscape(String(getUpstreamStatusText()));
+    String upstreamSignal = upstreamConnected ? jsonEscape(String(getUpstreamSignalText(upstreamRSSI))) : "";
     String dnsAllowlist = jsonEscape(String(dnsCfg.allowlist));
+    String dnsBlocklist = jsonEscape(String(dnsCfg.blocklist));
     String natStatus = jsonEscape(String(getNATStatusText()));
+    String thermalStatusText = jsonEscape(String(getThermalStatusText()));
     String savedNetworks = buildSavedUpstreamNetworksJson();
     uint32_t dnsBlockedCount = 0;
     size_t dnsBlockedRecentCount = 0;
     String dnsBlockedRequests = buildBlockedDnsRequestsJson(dnsBlockedCount, dnsBlockedRecentCount);
     String json;
 
-    json.reserve(5600);
+    json.reserve(7000);
     json += "{";
     json += "\"rx\":";
     json += String((unsigned)cfg.rxCount);
@@ -547,6 +704,14 @@ String buildStatusJson() {
     json += String((unsigned)cfg.errorCount);
     json += ",\"uptime\":";
     json += String((unsigned)uptime);
+    json += ",\"chipTempC\":";
+    json += std::isfinite(thermalStatus.currentC) ? String(thermalStatus.currentC, 1) : "null";
+    json += ",\"chipTempAvgC\":";
+    json += std::isfinite(thermalStatus.averageC) ? String(thermalStatus.averageC, 1) : "null";
+    json += ",\"thermalStatus\":\"";
+    json += thermalStatusText;
+    json += "\",\"thermalProtect\":";
+    json += (isThermalProtectionActive() ? "true" : "false");
     json += ",\"canOK\":";
     json += (cfg.canOK ? "true" : "false");
     json += ",\"fsdTriggered\":";
@@ -571,6 +736,12 @@ String buildStatusJson() {
     json += String(hasUpstreamCredentials() ? 1 : 0);
     json += ",\"upstreamConnected\":";
     json += (upstreamConnected ? "true" : "false");
+    json += ",\"upstreamRSSI\":";
+    json += upstreamConnected ? String(upstreamRSSI) : "null";
+    json += ",\"wifiChannel\":";
+    json += String(wifiChannel);
+    json += ",\"apClients\":";
+    json += String(apClientCount);
     json += ",\"upstreamSSID\":\"";
     json += activeSSID;
     json += "\",\"connectedUpstreamSSID\":\"";
@@ -581,6 +752,8 @@ String buildStatusJson() {
     json += savedNetworks;
     json += ",\"upstreamStatus\":\"";
     json += upstreamStatus;
+    json += "\",\"upstreamSignal\":\"";
+    json += upstreamSignal;
     json += "\",\"upstreamIP\":\"";
     json += jsonEscape(upstreamIP);
     json += "\",\"apSSID\":\"";
@@ -590,9 +763,13 @@ String buildStatusJson() {
     json += "\",\"dnsWhitelistEnable\":";
     json += String((int)dnsCfg.enabled);
     json += ",\"dnsWhitelistCount\":";
-    json += String((unsigned)getDNSAllowlistCount());
+    json += String((unsigned)getDNSRuleCount(dnsCfg.allowlist));
+    json += ",\"dnsBlacklistCount\":";
+    json += String((unsigned)getDNSRuleCount(dnsCfg.blocklist));
     json += ",\"dnsAllowlist\":\"";
     json += dnsAllowlist;
+    json += "\",\"dnsBlocklist\":\"";
+    json += dnsBlocklist;
     json += "\",\"dnsBlockedCount\":";
     json += String((unsigned)dnsBlockedCount);
     json += ",\"dnsBlockedRecentCount\":";
@@ -761,6 +938,14 @@ void setupWebServer() {
                 changed = true;
             }
         }
+        if (req->hasParam("dnsBlocklist")) {
+            String value = req->getParam("dnsBlocklist")->value();
+            value.trim();
+            if (value.length() < static_cast<int>(sizeof(dnsCfg.blocklist))) {
+                copyStringToBuffer(dnsCfg.blocklist, sizeof(dnsCfg.blocklist), value);
+                changed = true;
+            }
+        }
 
         if (changed) saveConfig();
         if (wifiChanged) requestUpstreamApply();
@@ -873,7 +1058,14 @@ void loop() {
         ESP.restart();
     }
 
+    serviceThermalStatus();
     serviceUpstreamWiFi();
+    dnsIpPolicyService(
+        dnsCfg.allowlist,
+        dnsCfg.blocklist,
+        dnsCfg.enabled ? 1 : 0,
+        WiFi.status() == WL_CONNECTED ? 1 : 0
+    );
     syncNATState();
     vTaskDelay(1000);
 }

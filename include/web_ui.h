@@ -57,6 +57,7 @@ select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
 .status-wide{max-width:68%}
 .status-ok{color:#22c55e;font-weight:700}
 .status-err{color:#ef4444;font-weight:700}
+.status-warn{color:#f59e0b;font-weight:700}
 .status-yes{color:#22c55e;font-weight:700}
 .status-no{color:#64748b;font-weight:700}
 .ota-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -192,6 +193,10 @@ body{padding:12px}
   <div class="status-row"><span>上游状态</span><span id="sUpstream" class="status-no status-text">--</span></div>
   <div class="status-row"><span>当前热点</span><span id="sCurrentUpstream" class="status-no status-text status-wide">--</span></div>
   <div class="status-row"><span>已保存热点</span><span id="sSavedUpstreams" class="status-no status-text">0</span></div>
+  <div class="status-row"><span>上游 RSSI</span><span id="sUpstreamRSSI" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>信号质量</span><span id="sUpstreamSignal" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>当前信道</span><span id="sWiFiChannel" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>AP 客户端</span><span id="sAPClients" class="status-no status-text">0</span></div>
   <div class="status-row"><span>上游 IP</span><span id="sUpstreamIP" class="status-no status-text">--</span></div>
   <div class="status-row"><span>NAT 转发</span><span id="sNAT" class="status-no status-text">--</span></div>
   <div class="status-row"><span>本地 AP</span><span id="sAP" class="status-ok status-text">--</span></div>
@@ -199,29 +204,35 @@ body{padding:12px}
 </div>
 
 <div class="card card-feature card-dns">
-  <div class="card-title">DNS 白名单</div>
+  <div class="card-title">DNS 规则</div>
   <div class="row">
-    <span class="row-label">启用域名白名单</span>
+    <span class="row-label">启用 DNS 规则</span>
     <label class="toggle"><input type="checkbox" id="dnsWhitelistEnable" onchange="markDnsDirty()"><span class="slider"></span></label>
   </div>
   <div class="field">
     <label class="field-label" for="dnsAllowlist">允许解析的域名</label>
     <textarea class="text-input text-area" id="dnsAllowlist" maxlength="384" placeholder="每行一个域名，例如：&#10;tesla.com&#10;apple.com" oninput="markDnsDirty()"></textarea>
   </div>
+  <div class="field">
+    <label class="field-label" for="dnsBlocklist">禁止解析的域名</label>
+    <textarea class="text-input text-area" id="dnsBlocklist" maxlength="384" placeholder="每行一个域名，例如：&#10;google.com&#10;doubleclick.net" oninput="markDnsDirty()"></textarea>
+  </div>
   <div class="hint">支持逗号、空格或换行分隔。填写 `tesla.com` 会同时允许 `api.tesla.com` 这类子域名。</div>
-  <div class="hint">这项规则只影响连到 ESP32 本地 AP 且把 ESP32 当成 DNS 的设备；未命中的域名会直接返回拒绝。</div>
+  <div class="hint">黑名单优先于白名单。若白名单留空，则表示“除黑名单外全部放行”；白名单非空时，会启用严格白名单模式，缓存 IP 也会在转发层被限制。</div>
+  <div class="hint">这项规则只影响连到 ESP32 本地 AP 且把 ESP32 当成 DNS 的设备；命中黑名单或未命中白名单的域名会被拒绝。</div>
   <div class="actions">
-    <button class="save-btn" onclick="saveDns()">保存 DNS 白名单</button>
+    <button class="save-btn" onclick="saveDns()">保存 DNS 规则</button>
   </div>
   <div class="msg" id="dnsMsg"></div>
-  <div class="status-row"><span>白名单状态</span><span id="sDNSMode" class="status-no status-text">--</span></div>
-  <div class="status-row"><span>规则数量</span><span id="sDNSCount" class="status-no status-text">0</span></div>
+  <div class="status-row"><span>规则状态</span><span id="sDNSMode" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>白名单数量</span><span id="sDNSCount" class="status-no status-text">0</span></div>
+  <div class="status-row"><span>黑名单数量</span><span id="sDNSBlockCount" class="status-no status-text">0</span></div>
   <div class="status-row"><span>拦截总数</span><span id="sDNSBlocked" class="status-no status-text">0</span></div>
   <div class="section-head">
     <div class="field-label">最近被拦截请求</div>
     <button class="ghost-btn small-btn" onclick="clearBlockedDns()">清空记录</button>
   </div>
-  <div class="hint">这里只保留最近 20 条内存记录，用来排查哪些域名被白名单挡住了；设备重启后会清空。</div>
+  <div class="hint">这里按域名聚合统计被拦截次数，并按次数从小到大显示；设备重启后会清空。</div>
   <div class="saved-list" id="dnsBlockedList"></div>
 </div>
 
@@ -235,6 +246,8 @@ body{padding:12px}
   </div>
   <div class="status-row"><span>CAN 总线</span><span id="sCAN" class="status-no status-text">--</span></div>
   <div class="status-row"><span>FSD 已触发</span><span id="sFSD" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>芯片温度</span><span id="sChipTemp" class="status-no status-text">--</span></div>
+  <div class="status-row"><span>温控状态</span><span id="sThermal" class="status-no status-text status-wide">--</span></div>
 </div>
 
 <div class="card card-full card-ota">
@@ -276,6 +289,23 @@ function setWideStatusText(id,text,className){
   el.className=className+' status-text status-wide';
 }
 
+function formatChipTemp(current,average){
+  const currentValid=typeof current==='number'&&Number.isFinite(current);
+  const avgValid=typeof average==='number'&&Number.isFinite(average);
+  if(!currentValid&&!avgValid)return '--';
+  if(currentValid&&avgValid)return current.toFixed(1)+'°C / 平均 '+average.toFixed(1)+'°C';
+  if(currentValid)return current.toFixed(1)+'°C';
+  return '平均 '+average.toFixed(1)+'°C';
+}
+
+function getSignalClass(rssi){
+  if(typeof rssi!=='number'||!Number.isFinite(rssi))return 'status-no';
+  if(rssi>=-55)return 'status-ok';
+  if(rssi>=-67)return 'status-ok';
+  if(rssi>=-75)return 'status-warn';
+  return 'status-err';
+}
+
 function syncNetworkForm(d){
   document.getElementById('upstreamEnable').checked=!!d.upstreamEnable;
   const savedNetworks=Array.isArray(d.upstreamNetworks)?d.upstreamNetworks:[];
@@ -297,6 +327,7 @@ function syncDnsForm(d){
   if(dnsDirty)return;
   document.getElementById('dnsWhitelistEnable').checked=!!d.dnsWhitelistEnable;
   document.getElementById('dnsAllowlist').value=d.dnsAllowlist||'';
+  document.getElementById('dnsBlocklist').value=d.dnsBlocklist||'';
 }
 
 function setNetMessage(text,type){
@@ -311,14 +342,14 @@ function normalizeDomain(domain){
   return normalized;
 }
 
-function getDnsAllowlistRules(){
-  return (document.getElementById('dnsAllowlist').value||'')
+function getDnsRulesFromTextarea(id){
+  return (document.getElementById(id).value||'')
     .split(/[\s,;]+/)
     .map(normalizeDomain)
     .filter(Boolean);
 }
 
-function allowlistRuleMatchesDomain(domain,rule){
+function ruleMatchesDomain(domain,rule){
   if(!domain||!rule)return false;
   return domain===rule||(domain.length>rule.length&&domain.endsWith('.'+rule));
 }
@@ -326,7 +357,13 @@ function allowlistRuleMatchesDomain(domain,rule){
 function isDomainAlreadyAllowed(domain){
   const normalizedDomain=normalizeDomain(domain);
   if(!normalizedDomain)return false;
-  return getDnsAllowlistRules().some(rule=>allowlistRuleMatchesDomain(normalizedDomain,rule));
+  return getDnsRulesFromTextarea('dnsAllowlist').some(rule=>ruleMatchesDomain(normalizedDomain,rule));
+}
+
+function isDomainBlockedByBlacklist(domain){
+  const normalizedDomain=normalizeDomain(domain);
+  if(!normalizedDomain)return false;
+  return getDnsRulesFromTextarea('dnsBlocklist').some(rule=>ruleMatchesDomain(normalizedDomain,rule));
 }
 
 function renderScanResults(){
@@ -437,7 +474,7 @@ function renderBlockedDnsRequests(requests,currentUptime){
   if(!Array.isArray(requests)||!requests.length){
     const empty=document.createElement('div');
     empty.className='empty-box';
-    empty.textContent='暂时没有白名单拦截记录。';
+    empty.textContent='暂时没有被拦截域名统计。';
     wrap.appendChild(empty);
     return;
   }
@@ -446,6 +483,7 @@ function renderBlockedDnsRequests(requests,currentUptime){
     const row=document.createElement('div');
     row.className='saved-item';
     const normalizedDomain=normalizeDomain(item.domain);
+    const blockedByBlacklist=isDomainBlockedByBlacklist(normalizedDomain);
     const alreadyAllowed=isDomainAlreadyAllowed(normalizedDomain);
 
     const main=document.createElement('div');
@@ -458,15 +496,14 @@ function renderBlockedDnsRequests(requests,currentUptime){
 
     const tags=document.createElement('div');
     tags.className='saved-tags';
-    if(item.clientIP)appendTag(tags,item.clientIP,'');
-    if(item.qType)appendTag(tags,item.qType,'warn');
-    appendTag(tags,formatRelativeTime((currentUptime||0)-(item.blockedAt||0)),'busy');
+    appendTag(tags,String(item.count||0)+'次','warn');
+    appendTag(tags,formatRelativeTime((currentUptime||0)-(item.lastBlockedAt||0)),'busy');
     main.appendChild(tags);
 
     const addBtn=document.createElement('button');
     addBtn.className='ghost-btn small-btn';
-    addBtn.textContent=alreadyAllowed?'已在白名单':'加入白名单';
-    addBtn.disabled=alreadyAllowed||!normalizedDomain;
+    addBtn.textContent=blockedByBlacklist?'已在黑名单':(alreadyAllowed?'已在白名单':'加入白名单');
+    addBtn.disabled=blockedByBlacklist||alreadyAllowed||!normalizedDomain;
     addBtn.onclick=()=>addBlockedDomainToAllowlist(normalizedDomain);
 
     row.appendChild(main);
@@ -492,6 +529,11 @@ function poll(){
     fsdEl.textContent=d.fsdTriggered?'是':'否';
     fsdEl.className=(d.fsdTriggered?'status-yes':'status-no')+' status-text';
 
+    let thermalClass='status-ok';
+    if(d.thermalProtect)thermalClass='status-err';
+    else if((d.thermalStatus||'').includes('降频')||(d.thermalStatus||'').includes('偏高'))thermalClass='status-warn';
+    let signalClass=getSignalClass(d.upstreamRSSI);
+
     document.getElementById('fsdEnable').checked=!!d.fsdEnable;
     document.getElementById('hwMode').value=d.hwMode;
     document.getElementById('speedProfile').value=d.speedProfile;
@@ -505,13 +547,20 @@ function poll(){
     setStatusText('sUpstream',d.upstreamStatus||'--',d.upstreamConnected?'status-ok':(d.upstreamEnable?'status-err':'status-no'));
     setWideStatusText('sCurrentUpstream',d.connectedUpstreamSSID||d.upstreamSSID||'--',d.upstreamConnected?'status-ok':'status-no');
     setStatusText('sSavedUpstreams',String(d.upstreamSavedCount||0),d.upstreamSavedCount?'status-ok':'status-no');
+    setStatusText('sUpstreamRSSI',typeof d.upstreamRSSI==='number'&&Number.isFinite(d.upstreamRSSI)?String(d.upstreamRSSI)+' dBm':'--',signalClass);
+    setStatusText('sUpstreamSignal',d.upstreamSignal||'--',signalClass);
+    setStatusText('sWiFiChannel',d.wifiChannel?String(d.wifiChannel):'--',d.wifiChannel?'status-ok':'status-no');
+    setStatusText('sAPClients',String(d.apClients||0),(d.apClients||0)>1?'status-warn':'status-ok');
     setStatusText('sUpstreamIP',d.upstreamIP||'--',d.upstreamConnected?'status-ok':'status-no');
     setStatusText('sNAT',d.natStatus||'--',d.natEnabled?'status-ok':(d.upstreamConnected?'status-err':'status-no'));
     setStatusText('sAP',d.apSSID||'--','status-ok');
     setStatusText('sAPIP',d.apIP||'--','status-ok');
     setWideStatusText('sDNSMode',d.dnsWhitelistEnable?'已启用':'未启用',d.dnsWhitelistEnable?'status-ok':'status-no');
     setStatusText('sDNSCount',String(d.dnsWhitelistCount||0),d.dnsWhitelistCount?'status-ok':'status-no');
+    setStatusText('sDNSBlockCount',String(d.dnsBlacklistCount||0),d.dnsBlacklistCount?'status-err':'status-no');
     setStatusText('sDNSBlocked',String(d.dnsBlockedCount||0),d.dnsBlockedCount?'status-err':'status-no');
+    setWideStatusText('sChipTemp',formatChipTemp(d.chipTempC,d.chipTempAvgC),thermalClass);
+    setWideStatusText('sThermal',d.thermalStatus||'--',thermalClass);
     latestBlockedDnsRequests=Array.isArray(d.dnsBlockedRequests)?d.dnsBlockedRequests:[];
     latestStatusUptime=d.uptime||0;
     renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
@@ -609,12 +658,13 @@ document.getElementById('scanResults').addEventListener('blur',()=>{
   }
 });
 
-function persistDnsAllowlist(successText){
+function persistDnsRules(successText){
   const msg=document.getElementById('dnsMsg');
   const params=new URLSearchParams();
 
   params.set('dnsWhitelistEnable',document.getElementById('dnsWhitelistEnable').checked?'1':'0');
   params.set('dnsAllowlist',document.getElementById('dnsAllowlist').value.trim());
+  params.set('dnsBlocklist',document.getElementById('dnsBlocklist').value.trim());
 
   msg.textContent='保存中...';
   msg.className='msg';
@@ -624,7 +674,7 @@ function persistDnsAllowlist(successText){
     return r.text();
   }).then(()=>{
     dnsDirty=false;
-    msg.textContent=successText||'DNS 白名单已保存';
+    msg.textContent=successText||'DNS 规则已保存';
     msg.className='msg ok';
     poll();
   }).catch(()=>{
@@ -634,7 +684,7 @@ function persistDnsAllowlist(successText){
 }
 
 function saveDns(){
-  persistDnsAllowlist('DNS 白名单已保存');
+  persistDnsRules('DNS 规则已保存');
 }
 
 function addBlockedDomainToAllowlist(domain){
@@ -654,12 +704,19 @@ function addBlockedDomainToAllowlist(domain){
     return;
   }
 
+  if(isDomainBlockedByBlacklist(normalizedDomain)){
+    msg.textContent='这个域名已在黑名单里，黑名单优先，请先移除黑名单规则';
+    msg.className='msg err';
+    renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
+    return;
+  }
+
   const textarea=document.getElementById('dnsAllowlist');
   const current=textarea.value.trim();
   textarea.value=current?current+'\n'+normalizedDomain:normalizedDomain;
   dnsDirty=true;
   renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
-  persistDnsAllowlist('已加入白名单: '+normalizedDomain);
+  persistDnsRules('已加入白名单: '+normalizedDomain);
 }
 
 function clearBlockedDns(){
