@@ -30,6 +30,7 @@ select,.text-input{width:100%;background:#1e293b;color:#e2e8f0;border:1px solid 
 .text-area{min-height:120px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 select{padding-right:32px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;min-width:110px;cursor:pointer}
 select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
+select:disabled,.text-input:disabled,.toggle input:disabled+.slider{opacity:.45;cursor:not-allowed}
 .field{padding:10px 0}
 .field+.field{border-top:1px solid #1e293b}
 .field-label{display:block;font-size:12px;color:#94a3b8;margin-bottom:8px;letter-spacing:.5px}
@@ -149,6 +150,27 @@ body{padding:12px}
       <option value="0">手动</option>
     </select>
   </div>
+  <div class="row">
+    <span class="row-label">HW3 速度偏移</span>
+    <label class="toggle"><input type="checkbox" id="speedOffsetEnable" onchange="setVal('speedOffsetEnable',this.checked?1:0)"><span class="slider"></span></label>
+  </div>
+  <div class="field">
+    <label class="field-label" for="speedOffsetPct">偏移百分比（+10% 表示高于当前限速 10%）</label>
+    <select id="speedOffsetPct" onchange="setVal('speedOffsetPct',this.value)">
+      <option value="0" selected>+0%</option>
+      <option value="5">+5%</option>
+      <option value="10">+10%</option>
+      <option value="15">+15%</option>
+      <option value="20">+20%</option>
+      <option value="25">+25%</option>
+      <option value="30">+30%</option>
+      <option value="35">+35%</option>
+      <option value="40">+40%</option>
+      <option value="45">+45%</option>
+      <option value="50">+50%</option>
+    </select>
+  </div>
+  <div class="hint">仅 HW3 生效。启用后会按 release 版同样的编码方式注入速度偏移，建议先从 +5% 或 +10% 开始测试。</div>
   <div class="row">
     <span class="row-label">限速提示音抑制</span>
     <label class="toggle"><input type="checkbox" id="isaChime" onchange="setVal('isaChime',this.checked?1:0)"><span class="slider"></span></label>
@@ -538,9 +560,15 @@ function poll(){
     document.getElementById('hwMode').value=d.hwMode;
     document.getElementById('speedProfile').value=d.speedProfile;
     document.getElementById('profileMode').value=d.profileMode?'1':'0';
+    document.getElementById('speedOffsetEnable').checked=!!d.speedOffsetEnable;
+    document.getElementById('speedOffsetPct').value=String(d.speedOffsetPct||0);
     document.getElementById('isaChime').checked=!!d.isaChime;
     document.getElementById('emergencyDet').checked=!!d.emergencyDet;
     document.getElementById('chinaMode').checked=!!d.chinaMode;
+
+    const isHw3=String(d.hwMode)==='1';
+    document.getElementById('speedOffsetEnable').disabled=!isHw3;
+    document.getElementById('speedOffsetPct').disabled=!isHw3||!d.speedOffsetEnable;
 
     syncNetworkForm(d);
     syncDnsForm(d);

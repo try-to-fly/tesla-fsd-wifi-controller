@@ -27,8 +27,8 @@
 // ── WiFi AP config ──
 static const char* AP_SSID = "FSD-Controller";
 static const char* AP_PASS = "12345678";   // min 8 chars
-static const IPAddress AP_IP(192, 168, 4, 1);
-static const IPAddress AP_GATEWAY(192, 168, 4, 1);
+static const IPAddress AP_IP(9, 9, 9, 9);
+static const IPAddress AP_GATEWAY(9, 9, 9, 9);
 static const IPAddress AP_SUBNET(255, 255, 255, 0);
 static constexpr uint32_t UPSTREAM_RETRY_MS = 15000;
 static constexpr uint32_t UPSTREAM_FAILURE_RETRY_MS = 3000;
@@ -613,6 +613,8 @@ void loadConfig() {
     cfg.hwMode             = prefs.getUChar("hwMode", 2);
     cfg.speedProfile       = prefs.getUChar("spPro", 1);
     cfg.profileModeAuto    = prefs.getBool("proAuto", true);
+    cfg.speedOffsetEnable  = prefs.getBool("spOffEn", false);
+    cfg.speedOffsetPercent = prefs.getUChar("spOffPct", 0);
     cfg.isaChimeSuppress   = prefs.getBool("isaChm", false);
     cfg.emergencyDetection = prefs.getBool("emDet", true);
     cfg.chinaMode          = prefs.getBool("cnMode", false);
@@ -639,6 +641,7 @@ void loadConfig() {
     // Clamp values
     if (cfg.hwMode > 2)       cfg.hwMode = 2;
     if (cfg.speedProfile > 4) cfg.speedProfile = 1;
+    if (cfg.speedOffsetPercent > 50) cfg.speedOffsetPercent = 50;
 }
 
 void saveConfig() {
@@ -647,6 +650,8 @@ void saveConfig() {
     prefs.putUChar("hwMode", cfg.hwMode);
     prefs.putUChar("spPro",  cfg.speedProfile);
     prefs.putBool("proAuto", cfg.profileModeAuto);
+    prefs.putBool("spOffEn", cfg.speedOffsetEnable);
+    prefs.putUChar("spOffPct", cfg.speedOffsetPercent);
     prefs.putBool("isaChm",  cfg.isaChimeSuppress);
     prefs.putBool("emDet",   cfg.emergencyDetection);
     prefs.putBool("cnMode",  cfg.chinaMode);
@@ -724,6 +729,10 @@ String buildStatusJson() {
     json += String((int)cfg.speedProfile);
     json += ",\"profileMode\":";
     json += String((int)cfg.profileModeAuto);
+    json += ",\"speedOffsetEnable\":";
+    json += String((int)cfg.speedOffsetEnable);
+    json += ",\"speedOffsetPct\":";
+    json += String((int)cfg.speedOffsetPercent);
     json += ",\"isaChime\":";
     json += String((int)cfg.isaChimeSuppress);
     json += ",\"emergencyDet\":";
@@ -907,6 +916,17 @@ void setupWebServer() {
         }
         if (req->hasParam("profileMode")) {
             cfg.profileModeAuto = req->getParam("profileMode")->value().toInt() != 0;
+            changed = true;
+        }
+        if (req->hasParam("speedOffsetEnable")) {
+            cfg.speedOffsetEnable = req->getParam("speedOffsetEnable")->value().toInt() != 0;
+            changed = true;
+        }
+        if (req->hasParam("speedOffsetPct")) {
+            int value = req->getParam("speedOffsetPct")->value().toInt();
+            if (value < 0) value = 0;
+            if (value > 50) value = 50;
+            cfg.speedOffsetPercent = static_cast<uint8_t>(value);
             changed = true;
         }
         if (req->hasParam("isaChime")) {

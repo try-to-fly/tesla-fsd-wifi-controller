@@ -11,6 +11,8 @@ struct FSDConfig {
     volatile uint8_t  hwMode              = 2;       // 0=LEGACY, 1=HW3, 2=HW4
     volatile uint8_t  speedProfile        = 1;       // 0-4
     volatile bool     profileModeAuto     = true;    // true=auto from stalk, false=manual
+    volatile bool     speedOffsetEnable   = false;   // HW3 only, inject configured offset
+    volatile uint8_t  speedOffsetPercent  = 0;       // 0-50 (% over limit)
     volatile bool     isaChimeSuppress    = false;
     volatile bool     emergencyDetection  = true;
     volatile bool     chinaMode          = false;  // CN firmware: bypass isFSDSelectedInUI check
@@ -107,7 +109,9 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
             else cfg.errorCount++;
         }
         if (index == 2 && cfg.fsdTriggered && cfg.fsdEnable) {
-            int speedOffset = std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
+            int speedOffset = cfg.speedOffsetEnable
+                ? static_cast<int>(cfg.speedOffsetPercent) * 4
+                : std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
             frame.data[0] &= ~(0b11000000);
             frame.data[1] &= ~(0b00111111);
             frame.data[0] |= (speedOffset & 0x03) << 6;
