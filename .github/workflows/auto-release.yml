@@ -111,16 +111,24 @@ jobs:
 
       - name: Build firmware
         if: steps.meta.outputs.should_build == 'true'
-        run: pio run -e esp32
+        run: pio run -e esp32s3
 
-      - name: Verify build artifacts
+      - name: Verify and collect release artifacts
         if: steps.meta.outputs.should_build == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          test -f .pio/build/esp32/firmware.bin
-          test -f .pio/build/esp32/bootloader.bin
-          test -f .pio/build/esp32/partitions.bin
+
+          mkdir -p release-assets
+          test -f ".pio/build/esp32s3/firmware.bin"
+          test -f ".pio/build/esp32s3/bootloader.bin"
+          test -f ".pio/build/esp32s3/partitions.bin"
+
+          cp ".pio/build/esp32s3/firmware.bin" "release-assets/esp32s3-firmware.bin"
+          cp ".pio/build/esp32s3/bootloader.bin" "release-assets/esp32s3-bootloader.bin"
+          cp ".pio/build/esp32s3/partitions.bin" "release-assets/esp32s3-partitions.bin"
+
+          ls -lh release-assets
 
       - name: Generate release notes
         if: steps.meta.outputs.should_build == 'true'
@@ -130,7 +138,7 @@ jobs:
           Auto-built from commit \`${GITHUB_SHA}\`.
 
           - Source version: \`${{ steps.meta.outputs.version }}\` (from \`CMakeLists.txt\` -> \`PROJECT_VER\`)
-          - Build environment: \`esp32\`
+          - Target env: \`esp32s3\`
           - Workflow: \`${GITHUB_WORKFLOW}\`
           EOF
 
@@ -142,9 +150,6 @@ jobs:
           name: ${{ steps.meta.outputs.release_name }}
           prerelease: ${{ steps.meta.outputs.is_prerelease }}
           body_path: release-notes.md
-          files: |
-            .pio/build/esp32/firmware.bin
-            .pio/build/esp32/bootloader.bin
-            .pio/build/esp32/partitions.bin
+          files: release-assets/*
           overwrite_files: true
           make_latest: ${{ steps.meta.outputs.is_prerelease == 'true' && 'false' || 'true' }}
