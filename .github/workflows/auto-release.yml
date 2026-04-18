@@ -107,7 +107,7 @@ jobs:
 
       - name: Install PlatformIO
         if: steps.meta.outputs.should_build == 'true'
-        run: pip install --upgrade platformio
+        run: pip install --upgrade platformio esptool
 
       - name: Build firmware
         if: steps.meta.outputs.should_build == 'true'
@@ -124,6 +124,14 @@ jobs:
           test -f ".pio/build/esp32s3/bootloader.bin"
           test -f ".pio/build/esp32s3/partitions.bin"
 
+          # Merge into one full image so users can flash with:
+          # esptool ... write_flash 0x0 esp32s3-full.bin
+          esptool --chip esp32s3 merge-bin -o "release-assets/esp32s3-full.bin" \
+            --flash-mode keep --flash-freq keep --flash-size keep \
+            0x0 ".pio/build/esp32s3/bootloader.bin" \
+            0x8000 ".pio/build/esp32s3/partitions.bin" \
+            0x10000 ".pio/build/esp32s3/firmware.bin"
+
           cp ".pio/build/esp32s3/firmware.bin" "release-assets/esp32s3-firmware.bin"
           cp ".pio/build/esp32s3/bootloader.bin" "release-assets/esp32s3-bootloader.bin"
           cp ".pio/build/esp32s3/partitions.bin" "release-assets/esp32s3-partitions.bin"
@@ -139,6 +147,11 @@ jobs:
 
           - Source version: \`${{ steps.meta.outputs.version }}\` (from \`CMakeLists.txt\` -> \`PROJECT_VER\`)
           - Target env: \`esp32s3\`
+          - Artifacts:
+            - \`esp32s3-full.bin\` (single-file full flash image, write at \`0x0\`)
+            - \`esp32s3-bootloader.bin\` (write at \`0x0\`)
+            - \`esp32s3-partitions.bin\` (write at \`0x8000\`)
+            - \`esp32s3-firmware.bin\` (write at \`0x10000\`)
           - Workflow: \`${GITHUB_WORKFLOW}\`
           EOF
 
