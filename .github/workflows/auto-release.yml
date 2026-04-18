@@ -111,7 +111,7 @@ jobs:
 
       - name: Build firmware
         if: steps.meta.outputs.should_build == 'true'
-        run: pio run -e esp32s3
+        run: pio run -e esp32
 
       - name: Verify and collect release artifacts
         if: steps.meta.outputs.should_build == 'true'
@@ -120,13 +120,13 @@ jobs:
           set -euo pipefail
 
           mkdir -p release-assets
-          test -f ".pio/build/esp32s3/firmware.bin"
-          test -f ".pio/build/esp32s3/bootloader.bin"
-          test -f ".pio/build/esp32s3/partitions.bin"
+          test -f ".pio/build/esp32/firmware.bin"
+          test -f ".pio/build/esp32/bootloader.bin"
+          test -f ".pio/build/esp32/partitions.bin"
 
-          cp ".pio/build/esp32s3/firmware.bin" "release-assets/esp32s3-firmware.bin"
-          cp ".pio/build/esp32s3/bootloader.bin" "release-assets/esp32s3-bootloader.bin"
-          cp ".pio/build/esp32s3/partitions.bin" "release-assets/esp32s3-partitions.bin"
+          cp ".pio/build/esp32/firmware.bin" "release-assets/esp32-firmware.bin"
+          cp ".pio/build/esp32/bootloader.bin" "release-assets/esp32-bootloader.bin"
+          cp ".pio/build/esp32/partitions.bin" "release-assets/esp32-partitions.bin"
 
           ls -lh release-assets
 
@@ -138,7 +138,7 @@ jobs:
           Auto-built from commit \`${GITHUB_SHA}\`.
 
           - Source version: \`${{ steps.meta.outputs.version }}\` (from \`CMakeLists.txt\` -> \`PROJECT_VER\`)
-          - Target env: \`esp32s3\`
+          - Target env: \`esp32\`
           - Workflow: \`${GITHUB_WORKFLOW}\`
           EOF
 

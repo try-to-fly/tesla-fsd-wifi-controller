@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 PLATFORMIO_INI="$PROJECT_DIR/platformio.ini"
 
-ENV_NAME="${PIO_ENV:-esp32s3}"
+ENV_NAME="${PIO_ENV:-esp32}"
 CLEAN_BUILD=0
 OUTPUT_DIR="$PROJECT_DIR/firmware"
 
@@ -16,14 +16,14 @@ usage() {
   ./build_firmware.sh [选项]
 
 选项:
-  -e, --env <name>      指定 PlatformIO 环境名（默认: esp32s3）
+  -e, --env <name>      指定 PlatformIO 环境名（默认: esp32）
   -c, --clean           先执行 clean 再构建
   -o, --output <dir>    指定固件输出目录（默认: ./firmware）
   -h, --help            显示帮助
 
 示例:
   ./build_firmware.sh
-  ./build_firmware.sh -e esp32s3 -c
+  ./build_firmware.sh -e esp32 -c
   ./build_firmware.sh -o ./dist/firmware
 EOF
 }
