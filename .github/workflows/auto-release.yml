@@ -1,0 +1,150 @@
+name: Auto Release Firmware
+
+on:
+  push:
+    paths:
+      - CMakeLists.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-firmware
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags
+
+      - name: Read version from CMakeLists.txt
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f CMakeLists.txt ]]; then
+            echo "CMakeLists.txt not found"
+            exit 1
+          fi
+
+          VERSION="$(sed -n 's/^[[:space:]]*set(PROJECT_VER[[:space:]]*"\([^"]*\)".*/\1/p' CMakeLists.txt | head -n1)"
+          if [[ -z "${VERSION}" ]]; then
+            echo "Failed to read PROJECT_VER from CMakeLists.txt"
+            exit 1
+          fi
+
+          BEFORE_SHA="${{ github.event.before }}"
+          PREV_VERSION=""
+          if [[ -n "${BEFORE_SHA}" && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            if git cat-file -e "${BEFORE_SHA}:CMakeLists.txt" 2>/dev/null; then
+              PREV_VERSION="$(git show "${BEFORE_SHA}:CMakeLists.txt" | sed -n 's/^[[:space:]]*set(PROJECT_VER[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
+            fi
+          fi
+
+          VERSION_CHANGED="true"
+          if [[ -n "${PREV_VERSION}" && "${PREV_VERSION}" == "${VERSION}" ]]; then
+            VERSION_CHANGED="false"
+          fi
+
+          RELEASE_TAG="v${VERSION}"
+          if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            RELEASE_NAME="Firmware v${VERSION}"
+            IS_PRERELEASE="false"
+          else
+            RELEASE_NAME="Firmware ${VERSION}"
+            IS_PRERELEASE="true"
+          fi
+
+          TAG_EXISTS="false"
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            TAG_EXISTS="true"
+          fi
+
+          SHOULD_BUILD="true"
+          SKIP_REASON=""
+          if [[ "${VERSION_CHANGED}" != "true" ]]; then
+            SHOULD_BUILD="false"
+            SKIP_REASON="PROJECT_VER unchanged"
+          elif [[ "${TAG_EXISTS}" == "true" ]]; then
+            SHOULD_BUILD="false"
+            SKIP_REASON="release tag already exists"
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "prev_version=${PREV_VERSION}"
+            echo "version_changed=${VERSION_CHANGED}"
+            echo "release_tag=${RELEASE_TAG}"
+            echo "release_name=${RELEASE_NAME}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+            echo "tag_exists=${TAG_EXISTS}"
+            echo "should_build=${SHOULD_BUILD}"
+            echo "skip_reason=${SKIP_REASON}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Skip info
+        if: steps.meta.outputs.should_build != 'true'
+        run: |
+          echo "Skip build."
+          echo "Version: ${{ steps.meta.outputs.version }}"
+          echo "Previous version: ${{ steps.meta.outputs.prev_version }}"
+          echo "Reason: ${{ steps.meta.outputs.skip_reason }}"
+
+      - name: Setup Python
+        if: steps.meta.outputs.should_build == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        if: steps.meta.outputs.should_build == 'true'
+        run: pip install --upgrade platformio
+
+      - name: Build firmware
+        if: steps.meta.outputs.should_build == 'true'
+        run: pio run -e esp32
+
+      - name: Verify build artifacts
+        if: steps.meta.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .pio/build/esp32/firmware.bin
+          test -f .pio/build/esp32/bootloader.bin
+          test -f .pio/build/esp32/partitions.bin
+
+      - name: Generate release notes
+        if: steps.meta.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          cat > release-notes.md <<EOF
+          Auto-built from commit \`${GITHUB_SHA}\`.
+
+          - Source version: \`${{ steps.meta.outputs.version }}\` (from \`CMakeLists.txt\` -> \`PROJECT_VER\`)
+          - Build environment: \`esp32\`
+          - Workflow: \`${GITHUB_WORKFLOW}\`
+          EOF
+
+      - name: Create or update release
+        if: steps.meta.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          prerelease: ${{ steps.meta.outputs.is_prerelease }}
+          body_path: release-notes.md
+          files: |
+            .pio/build/esp32/firmware.bin
+            .pio/build/esp32/bootloader.bin
+            .pio/build/esp32/partitions.bin
+          overwrite_files: true
+          make_latest: ${{ steps.meta.outputs.is_prerelease == 'true' && 'false' || 'true' }}
