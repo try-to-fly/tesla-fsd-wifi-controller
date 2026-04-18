@@ -26,11 +26,17 @@ h1{font-size:22px;color:#38bdf8;font-weight:700;letter-spacing:1px}
 .slider:before{content:"";position:absolute;height:22px;width:22px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
 input:checked+.slider{background:#22c55e}
 input:checked+.slider:before{transform:translateX(22px)}
-select,.text-input{width:100%;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-size:13px}
+select,.text-input,.picker-trigger{width:100%;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-size:13px}
 .text-area{min-height:120px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 select{padding-right:32px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;min-width:110px;cursor:pointer}
-select:focus,.text-input:focus{outline:none;border-color:#38bdf8}
+select:focus,.text-input:focus,.picker-trigger:focus{outline:none;border-color:#38bdf8}
 select:disabled,.text-input:disabled,.toggle input:disabled+.slider{opacity:.45;cursor:not-allowed}
+.picker-wrap{width:100%;min-width:110px}
+.picker-native{display:none}
+.picker-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;cursor:pointer}
+.picker-trigger:after{content:"";flex:0 0 auto;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid #94a3b8}
+.picker-trigger:disabled{opacity:.45;cursor:not-allowed}
+.picker-trigger:disabled:after{opacity:.45}
 .field{padding:10px 0}
 .field+.field{border-top:1px solid #1e293b}
 .field-label{display:block;font-size:12px;color:#94a3b8;margin-bottom:8px;letter-spacing:.5px}
@@ -83,6 +89,18 @@ select:disabled,.text-input:disabled,.toggle input:disabled+.slider{opacity:.45;
 .tag.busy{background:rgba(56,189,248,.16);color:#7dd3fc}
 .tag.warn{background:rgba(234,179,8,.16);color:#fde68a}
 .empty-box{border:1px dashed #334155;border-radius:10px;padding:12px;text-align:center;font-size:12px;color:#64748b}
+.picker-modal{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(2,8,23,.72);z-index:9999;padding:16px}
+.picker-modal.open{display:flex}
+.picker-sheet{width:min(560px,100%);max-height:min(80vh,640px);background:#111827;border:1px solid rgba(56,189,248,.12);border-radius:18px;box-shadow:0 28px 70px rgba(2,8,23,.45);overflow:hidden}
+.picker-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid #1e293b}
+.picker-title{font-size:15px;font-weight:700;color:#e2e8f0}
+.picker-close{background:transparent;border:none;color:#94a3b8;font-size:22px;line-height:1;cursor:pointer;padding:4px 6px}
+.picker-body{padding:10px;overflow:auto;max-height:min(60vh,520px)}
+.picker-option{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:none;border-radius:12px;background:#172033;color:#e2e8f0;font-size:15px;text-align:left;cursor:pointer}
+.picker-option+.picker-option{margin-top:8px}
+.picker-option.active{background:rgba(56,189,248,.18);color:#7dd3fc}
+.picker-option:after{content:"";width:10px;height:10px;border-radius:999px;border:2px solid currentColor;opacity:.25}
+.picker-option.active:after{opacity:1;background:currentColor}
 @media (min-width:980px){
 body{padding:24px}
 .page-header{padding:18px 0 28px}
@@ -125,51 +143,63 @@ body{padding:12px}
     <span class="row-label">FSD 开关</span>
     <label class="toggle"><input type="checkbox" id="fsdEnable" checked onchange="setVal('fsdEnable',this.checked?1:0)"><span class="slider"></span></label>
   </div>
-  <div class="row">
-    <span class="row-label">硬件版本</span>
-    <select id="hwMode" onchange="setVal('hwMode',this.value)">
-      <option value="0">LEGACY</option>
-      <option value="1">HW3</option>
-      <option value="2" selected>HW4</option>
-    </select>
-  </div>
-  <div class="row">
-    <span class="row-label">速度模式</span>
-    <select id="speedProfile" onchange="setVal('speedProfile',this.value)">
-      <option value="0">保守</option>
-      <option value="1" selected>默认</option>
-      <option value="2">适中</option>
-      <option value="3">激进</option>
-      <option value="4">最大</option>
-    </select>
-  </div>
-  <div class="row">
-    <span class="row-label">模式来源</span>
-    <select id="profileMode" onchange="setVal('profileMode',this.value)">
-      <option value="1" selected>自动（拨杆）</option>
-      <option value="0">手动</option>
-    </select>
-  </div>
+	<div class="row">
+	    <span class="row-label">硬件版本</span>
+	    <div class="picker-wrap">
+	      <select id="hwMode" class="picker-native" data-picker-title="硬件版本" data-picker-trigger="hwModeBtn" onchange="setVal('hwMode',this.value)">
+	        <option value="0">LEGACY</option>
+	        <option value="1">HW3</option>
+	        <option value="2" selected>HW4</option>
+	      </select>
+	      <button type="button" class="picker-trigger" id="hwModeBtn" onclick="openPicker('hwMode')"></button>
+	    </div>
+	  </div>
+	  <div class="row">
+	    <span class="row-label">速度模式</span>
+	    <div class="picker-wrap">
+	      <select id="speedProfile" class="picker-native" data-picker-title="速度模式" data-picker-trigger="speedProfileBtn" onchange="setVal('speedProfile',this.value)">
+	        <option value="0">保守</option>
+	        <option value="1" selected>默认</option>
+	        <option value="2">适中</option>
+	        <option value="3">激进</option>
+	        <option value="4">最大</option>
+	      </select>
+	      <button type="button" class="picker-trigger" id="speedProfileBtn" onclick="openPicker('speedProfile')"></button>
+	    </div>
+	  </div>
+	  <div class="row">
+	    <span class="row-label">模式来源</span>
+	    <div class="picker-wrap">
+	      <select id="profileMode" class="picker-native" data-picker-title="模式来源" data-picker-trigger="profileModeBtn" onchange="setVal('profileMode',this.value)">
+	        <option value="1" selected>自动（拨杆）</option>
+	        <option value="0">手动</option>
+	      </select>
+	      <button type="button" class="picker-trigger" id="profileModeBtn" onclick="openPicker('profileMode')"></button>
+	    </div>
+	  </div>
   <div class="row">
     <span class="row-label">HW3 速度偏移</span>
     <label class="toggle"><input type="checkbox" id="speedOffsetEnable" onchange="setVal('speedOffsetEnable',this.checked?1:0)"><span class="slider"></span></label>
   </div>
-  <div class="field">
-    <label class="field-label" for="speedOffsetPct">偏移百分比（+10% 表示高于当前限速 10%）</label>
-    <select id="speedOffsetPct" onchange="setVal('speedOffsetPct',this.value)">
-      <option value="0" selected>+0%</option>
-      <option value="5">+5%</option>
-      <option value="10">+10%</option>
-      <option value="15">+15%</option>
-      <option value="20">+20%</option>
-      <option value="25">+25%</option>
-      <option value="30">+30%</option>
-      <option value="35">+35%</option>
-      <option value="40">+40%</option>
-      <option value="45">+45%</option>
-      <option value="50">+50%</option>
-    </select>
-  </div>
+	  <div class="field">
+	    <label class="field-label" for="speedOffsetPct">偏移百分比（+10% 表示高于当前限速 10%）</label>
+	    <div class="picker-wrap">
+	      <select id="speedOffsetPct" class="picker-native" data-picker-title="偏移百分比" data-picker-trigger="speedOffsetPctBtn" onchange="setVal('speedOffsetPct',this.value)">
+	        <option value="0" selected>+0%</option>
+	        <option value="5">+5%</option>
+	        <option value="10">+10%</option>
+	        <option value="15">+15%</option>
+	        <option value="20">+20%</option>
+	        <option value="25">+25%</option>
+	        <option value="30">+30%</option>
+	        <option value="35">+35%</option>
+	        <option value="40">+40%</option>
+	        <option value="45">+45%</option>
+	        <option value="50">+50%</option>
+	      </select>
+	      <button type="button" class="picker-trigger" id="speedOffsetPctBtn" onclick="openPicker('speedOffsetPct')"></button>
+	    </div>
+	  </div>
   <div class="hint">仅 HW3 生效。启用后会按 release 版同样的编码方式注入速度偏移，建议先从 +5% 或 +10% 开始测试。</div>
   <div class="row">
     <span class="row-label">限速提示音抑制</span>
@@ -187,19 +217,35 @@ body{padding:12px}
 
 <div class="card card-feature card-hotspot">
   <div class="card-title">上游热点</div>
+  <div class="field">
+    <label class="field-label" for="apSSID">本地热点名称</label>
+    <input class="text-input" type="text" id="apSSID" maxlength="32" placeholder="例如：FSD-Controller" oninput="markApDirty()">
+  </div>
+  <div class="field">
+    <label class="field-label" for="apPass">本地热点密码</label>
+    <input class="text-input" type="password" id="apPass" maxlength="63" placeholder="8-63 个字符" oninput="markApDirty()">
+  </div>
+  <div class="actions">
+    <button class="save-btn" onclick="saveApConfig()">保存本地热点</button>
+  </div>
+  <div class="msg" id="apMsg"></div>
+  <div class="hint">保存后设备会重新启动本地 AP。当前连接会断开，请用新的热点名称和密码重新连接。</div>
   <div class="row">
     <span class="row-label">启用手机热点接入</span>
     <label class="toggle"><input type="checkbox" id="upstreamEnable" onchange="setUpstreamEnabled(this.checked)"><span class="slider"></span></label>
   </div>
-  <div class="field">
-    <div class="inline-actions">
-      <label class="field-label" for="scanResults">搜索附近热点</label>
-      <button class="ghost-btn small-btn" id="scanBtn" onclick="scanUpstreamNetworks()">搜索热点</button>
-    </div>
-    <select id="scanResults">
-      <option value="">点击“搜索热点”查看附近可用热点</option>
-    </select>
-  </div>
+	  <div class="field">
+	    <div class="inline-actions">
+	      <label class="field-label" for="scanResults">搜索附近热点</label>
+	      <button class="ghost-btn small-btn" id="scanBtn" onclick="scanUpstreamNetworks()">搜索热点</button>
+	    </div>
+	    <div class="picker-wrap">
+	      <select id="scanResults" class="picker-native" data-picker-title="选择附近热点" data-picker-trigger="scanResultsBtn">
+	        <option value="">点击“搜索热点”查看附近可用热点</option>
+	      </select>
+	      <button type="button" class="picker-trigger" id="scanResultsBtn" onclick="openPicker('scanResults')"></button>
+	    </div>
+	  </div>
   <div class="field">
     <label class="field-label" for="upstreamPass">热点密码</label>
     <input class="text-input" type="password" id="upstreamPass" maxlength="63" placeholder="首次添加或更新密码时填写">
@@ -287,16 +333,32 @@ body{padding:12px}
 </div>
 </div>
 
+<div class="picker-modal" id="pickerModal" onclick="closePicker(event)">
+  <div class="picker-sheet" onclick="event.stopPropagation()">
+    <div class="picker-head">
+      <div class="picker-title" id="pickerTitle">请选择</div>
+      <button type="button" class="picker-close" onclick="closePicker()">&times;</button>
+    </div>
+    <div class="picker-body" id="pickerBody"></div>
+  </div>
+</div>
+
 <script>
 let dnsDirty=false;
+let apDirty=false;
 let scanResults=[];
 let pendingScanResultsRender=false;
 let latestBlockedDnsRequests=[];
 let latestStatusUptime=0;
+let activePickerId='';
 
 function markDnsDirty(){
   dnsDirty=true;
   renderBlockedDnsRequests(latestBlockedDnsRequests,latestStatusUptime);
+}
+
+function markApDirty(){
+  apDirty=true;
 }
 
 function setStatusText(id,text,className){
@@ -329,6 +391,10 @@ function getSignalClass(rssi){
 }
 
 function syncNetworkForm(d){
+  if(!apDirty){
+    document.getElementById('apSSID').value=d.apSSID||'';
+    document.getElementById('apPass').value=d.apPassword||'';
+  }
   document.getElementById('upstreamEnable').checked=!!d.upstreamEnable;
   const savedNetworks=Array.isArray(d.upstreamNetworks)?d.upstreamNetworks:[];
   let scanSavedStateChanged=false;
@@ -354,6 +420,12 @@ function syncDnsForm(d){
 
 function setNetMessage(text,type){
   const msg=document.getElementById('netMsg');
+  msg.textContent=text;
+  msg.className='msg'+(type?' '+type:'');
+}
+
+function setApMessage(text,type){
+  const msg=document.getElementById('apMsg');
   msg.textContent=text;
   msg.className='msg'+(type?' '+type:'');
 }
@@ -398,6 +470,7 @@ function renderScanResults(){
     opt.value='';
     opt.textContent='点击“搜索热点”查看附近可用热点';
     select.appendChild(opt);
+    syncPickerButton('scanResults');
     return;
   }
 
@@ -419,6 +492,7 @@ function renderScanResults(){
   if(scanResults.some(net=>net.ssid===current)){
     select.value=current;
   }
+  syncPickerButton('scanResults');
 }
 
 function refreshScanResultsSelect(force){
@@ -569,6 +643,11 @@ function poll(){
     const isHw3=String(d.hwMode)==='1';
     document.getElementById('speedOffsetEnable').disabled=!isHw3;
     document.getElementById('speedOffsetPct').disabled=!isHw3||!d.speedOffsetEnable;
+    syncPickerButton('hwMode');
+    syncPickerButton('speedProfile');
+    syncPickerButton('profileMode');
+    syncPickerButton('speedOffsetPct');
+    syncPickerButton('scanResults');
 
     syncNetworkForm(d);
     syncDnsForm(d);
@@ -599,6 +678,58 @@ function setVal(key,val){
   fetch('/api/set?'+key+'='+val).catch(()=>{});
 }
 
+function getSelectDisplayText(select){
+  if(!select||!select.options.length)return '请选择';
+  const option=select.options[select.selectedIndex>=0?select.selectedIndex:0];
+  return option&&option.textContent?option.textContent:'请选择';
+}
+
+function syncPickerButton(selectId){
+  const select=document.getElementById(selectId);
+  if(!select)return;
+  const btnId=select.dataset.pickerTrigger;
+  if(!btnId)return;
+  const btn=document.getElementById(btnId);
+  if(!btn)return;
+  btn.textContent=getSelectDisplayText(select);
+  btn.disabled=!!select.disabled;
+}
+
+function openPicker(selectId){
+  const select=document.getElementById(selectId);
+  if(!select||select.disabled)return;
+  activePickerId=selectId;
+  document.getElementById('pickerTitle').textContent=select.dataset.pickerTitle||'请选择';
+  const body=document.getElementById('pickerBody');
+  body.innerHTML='';
+  for(let i=0;i<select.options.length;i++){
+    const option=select.options[i];
+    if(option.disabled)continue;
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='picker-option'+(option.value===select.value?' active':'');
+    btn.textContent=option.textContent;
+    btn.onclick=()=>choosePickerValue(selectId,option.value);
+    body.appendChild(btn);
+  }
+  document.getElementById('pickerModal').classList.add('open');
+}
+
+function choosePickerValue(selectId,value){
+  const select=document.getElementById(selectId);
+  if(!select)return;
+  select.value=value;
+  syncPickerButton(selectId);
+  select.dispatchEvent(new Event('change',{bubbles:true}));
+  closePicker();
+}
+
+function closePicker(evt){
+  if(evt&&evt.target&&evt.target!==document.getElementById('pickerModal'))return;
+  activePickerId='';
+  document.getElementById('pickerModal').classList.remove('open');
+}
+
 function setUpstreamEnabled(enabled){
   setNetMessage('保存中...','');
   fetch('/api/set?upstreamEnable='+(enabled?'1':'0')).then(r=>{
@@ -610,6 +741,39 @@ function setUpstreamEnabled(enabled){
   }).catch(()=>{
     setNetMessage('保存失败','err');
     poll();
+  });
+}
+
+function saveApConfig(){
+  const ssid=(document.getElementById('apSSID').value||'').trim();
+  const pass=document.getElementById('apPass').value||'';
+  if(!ssid){
+    setApMessage('热点名称不能为空','err');
+    return;
+  }
+  if(ssid.length>32){
+    setApMessage('热点名称最多 32 个字符','err');
+    return;
+  }
+  if(pass.length<8||pass.length>63){
+    setApMessage('热点密码长度必须为 8-63 个字符','err');
+    return;
+  }
+  const params=new URLSearchParams();
+  params.set('apSSID',ssid);
+  params.set('apPass',pass);
+  setApMessage('保存中，热点将重新启动...','');
+  fetch('/api/set?'+params.toString()).then(async r=>{
+    if(!r.ok){
+      const txt=await r.text();
+      throw new Error(txt||'save failed');
+    }
+    return r.text();
+  }).then(()=>{
+    apDirty=false;
+    setApMessage('本地热点设置已保存，约 1 秒后会切换到新的名称和密码','ok');
+  }).catch(err=>{
+    setApMessage(err.message||'保存失败','err');
   });
 }
 
@@ -680,11 +844,7 @@ function deleteSavedUpstream(ssid){
   });
 }
 
-document.getElementById('scanResults').addEventListener('blur',()=>{
-  if(pendingScanResultsRender){
-    refreshScanResultsSelect(true);
-  }
-});
+['hwMode','speedProfile','profileMode','speedOffsetPct','scanResults'].forEach(syncPickerButton);
 
 function persistDnsRules(successText){
   const msg=document.getElementById('dnsMsg');

@@ -25,11 +25,12 @@
 #include "web_ui.h"
 
 // ── WiFi AP config ──
-static const char* AP_SSID = "FSD-Controller";
-static const char* AP_PASS = "12345678";   // min 8 chars
+static const char* DEFAULT_AP_SSID = "FSD-Controller";
+static const char* DEFAULT_AP_PASS = "12345678";   // min 8 chars
 static const IPAddress AP_IP(9, 9, 9, 9);
 static const IPAddress AP_GATEWAY(9, 9, 9, 9);
 static const IPAddress AP_SUBNET(255, 255, 255, 0);
+static constexpr uint32_t AP_CONFIG_APPLY_DELAY_MS = 800;
 static constexpr uint32_t UPSTREAM_RETRY_MS = 15000;
 static constexpr uint32_t UPSTREAM_FAILURE_RETRY_MS = 3000;
 static constexpr uint32_t UPSTREAM_RETRY_THROTTLED_MS = 60000;
@@ -51,6 +52,13 @@ static Preferences    prefs;
 static DNSWhitelistServer dnsServer;
 static volatile bool  otaPendingRestart = false;
 static bool           natEnabled = false;
+
+struct LocalAPConfig {
+    char ssid[33] = "FSD-Controller";
+    char pass[65] = "12345678";
+    volatile bool applyRequested = false;
+    uint32_t applyAtMillis = 0;
+};
 
 struct SavedUpstreamNetwork {
     char ssid[33] = {};
@@ -76,6 +84,7 @@ struct UpstreamWiFiConfig {
 
 static UpstreamWiFiConfig wifiCfg;
 static volatile bool upstreamScanInProgress = false;
+static LocalAPConfig apCfg;
 
 static DNSFilterConfig dnsCfg;
 
@@ -124,7 +133,7 @@ String jsonEscape(const String& value) {
 }
 
 bool isReservedUpstreamSSID(const String& ssid) {
-    return ssid.equals(AP_SSID);
+    return ssid.equals(apCfg.ssid);
 }
 
 void clearSavedUpstreamNetwork(SavedUpstreamNetwork& network) {
@@ -497,6 +506,24 @@ void requestUpstreamApply() {
     wifiCfg.applyRequested = true;
 }
 
+void requestLocalAPApply() {
+    apCfg.applyRequested = true;
+    apCfg.applyAtMillis = millis() + AP_CONFIG_APPLY_DELAY_MS;
+}
+
+bool applyLocalAPConfig() {
+    WiFi.softAPdisconnect(false);
+    delay(100);
+    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+    bool ok = WiFi.softAP(apCfg.ssid, apCfg.pass);
+    if (ok) {
+        Serial.printf("WiFi AP: %s  IP: %s\n", apCfg.ssid, WiFi.softAPIP().toString().c_str());
+    } else {
+        Serial.printf("WiFi AP restart failed for SSID: %s\n", apCfg.ssid);
+    }
+    return ok;
+}
+
 void startUpstreamConnect() {
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
 
@@ -618,6 +645,8 @@ void loadConfig() {
     cfg.isaChimeSuppress   = prefs.getBool("isaChm", false);
     cfg.emergencyDetection = prefs.getBool("emDet", true);
     cfg.chinaMode          = prefs.getBool("cnMode", false);
+    copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), prefs.getString("apSsid", DEFAULT_AP_SSID));
+    copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), prefs.getString("apPass", DEFAULT_AP_PASS));
     clearSavedUpstreamNetworks();
     wifiCfg.enabled        = prefs.getBool("upEn", false);
     uint8_t storedNetworkCount = prefs.getUChar("upCnt", 0);
@@ -642,6 +671,13 @@ void loadConfig() {
     if (cfg.hwMode > 2)       cfg.hwMode = 2;
     if (cfg.speedProfile > 4) cfg.speedProfile = 1;
     if (cfg.speedOffsetPercent > 50) cfg.speedOffsetPercent = 50;
+    if (apCfg.ssid[0] == '\0') {
+        copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), String(DEFAULT_AP_SSID));
+    }
+    size_t apPassLen = strlen(apCfg.pass);
+    if (apPassLen < 8 || apPassLen > 63) {
+        copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), String(DEFAULT_AP_PASS));
+    }
 }
 
 void saveConfig() {
@@ -655,6 +691,8 @@ void saveConfig() {
     prefs.putBool("isaChm",  cfg.isaChimeSuppress);
     prefs.putBool("emDet",   cfg.emergencyDetection);
     prefs.putBool("cnMode",  cfg.chinaMode);
+    prefs.putString("apSsid", apCfg.ssid);
+    prefs.putString("apPass", apCfg.pass);
     prefs.putBool("upEn",    wifiCfg.enabled);
     prefs.putUChar("upCnt",  wifiCfg.networkCount);
     for (uint8_t i = 0; i < MAX_UPSTREAM_NETWORKS; ++i) {
@@ -684,7 +722,8 @@ String buildStatusJson() {
     int32_t apClientCount = WiFi.softAPgetStationNum();
     String activeSSID = jsonEscape(getActiveUpstreamSSID());
     String connectedSSID = jsonEscape(getConnectedUpstreamSSID());
-    String apSSID = jsonEscape(String(AP_SSID));
+    String apSSID = jsonEscape(String(apCfg.ssid));
+    String apPass = jsonEscape(String(apCfg.pass));
     String upstreamIP = upstreamConnected ? WiFi.localIP().toString() : "";
     String apIP = WiFi.softAPIP().toString();
     String upstreamStatus = jsonEscape(String(getUpstreamStatusText()));
@@ -751,6 +790,9 @@ String buildStatusJson() {
     json += String(wifiChannel);
     json += ",\"apClients\":";
     json += String(apClientCount);
+    json += ",\"apPassword\":\"";
+    json += apPass;
+    json += "\"";
     json += ",\"upstreamSSID\":\"";
     json += activeSSID;
     json += "\",\"connectedUpstreamSSID\":\"";
@@ -901,6 +943,7 @@ void setupWebServer() {
     server.on("/api/set", HTTP_GET, [](AsyncWebServerRequest* req) {
         bool changed = false;
         bool wifiChanged = false;
+        bool apChanged = false;
 
         if (req->hasParam("fsdEnable")) {
             cfg.fsdEnable = req->getParam("fsdEnable")->value().toInt() != 0;
@@ -941,6 +984,27 @@ void setupWebServer() {
             cfg.chinaMode = req->getParam("chinaMode")->value().toInt() != 0;
             changed = true;
         }
+        if (req->hasParam("apSSID") || req->hasParam("apPass")) {
+            String ssid = req->hasParam("apSSID") ? req->getParam("apSSID")->value() : String(apCfg.ssid);
+            String pass = req->hasParam("apPass") ? req->getParam("apPass")->value() : String(apCfg.pass);
+            ssid.trim();
+
+            if (ssid.isEmpty() || ssid.length() > 32) {
+                req->send(400, "text/plain", "热点名称长度必须为 1-32 个字符");
+                return;
+            }
+            if (pass.length() < 8 || pass.length() > 63) {
+                req->send(400, "text/plain", "热点密码长度必须为 8-63 个字符");
+                return;
+            }
+
+            if (ssid != String(apCfg.ssid) || pass != String(apCfg.pass)) {
+                copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), ssid);
+                copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), pass);
+                changed = true;
+                apChanged = true;
+            }
+        }
         if (req->hasParam("upstreamEnable")) {
             wifiCfg.enabled = req->getParam("upstreamEnable")->value().toInt() != 0;
             changed = true;
@@ -968,6 +1032,7 @@ void setupWebServer() {
         }
 
         if (changed) saveConfig();
+        if (apChanged) requestLocalAPApply();
         if (wifiChanged) requestUpstreamApply();
         req->send(200, "text/plain", "OK");
     });
@@ -1061,9 +1126,7 @@ void setup() {
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(false);
     WiFi.mode(WIFI_AP_STA);
-    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
-    WiFi.softAP(AP_SSID, AP_PASS);
-    Serial.printf("WiFi AP: %s  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+    applyLocalAPConfig();
     requestUpstreamApply();
     dnsServer.begin();
 
@@ -1076,6 +1139,11 @@ void loop() {
     if (otaPendingRestart) {
         delay(1000);  // let response finish sending
         ESP.restart();
+    }
+
+    if (apCfg.applyRequested && static_cast<int32_t>(millis() - apCfg.applyAtMillis) >= 0) {
+        apCfg.applyRequested = false;
+        applyLocalAPConfig();
     }
 
     serviceThermalStatus();
