@@ -8,14 +8,14 @@
 // ── Runtime-configurable state (shared with web server) ──
 struct FSDConfig {
     volatile bool     fsdEnable           = true;
-    volatile uint8_t  hwMode              = 2;       // 0=LEGACY, 1=HW3, 2=HW4
+    volatile uint8_t  hwMode              = 1;       // 0=LEGACY, 1=HW3, 2=HW4  (默认 HW3)
     volatile uint8_t  speedProfile        = 1;       // 0-4
     volatile bool     profileModeAuto     = true;    // true=auto from stalk, false=manual
     volatile bool     speedOffsetEnable   = false;   // HW3 only, inject configured offset
     volatile uint8_t  speedOffsetPercent  = 0;       // 0-50 (% over limit)
     volatile bool     isaChimeSuppress    = false;
     volatile bool     emergencyDetection  = true;
-    volatile bool     chinaMode          = false;  // CN firmware: bypass isFSDSelectedInUI check
+    volatile bool     chinaMode          = true;   // CN firmware: bypass isFSDSelectedInUI check  (默认开启)
 
     // Stats
     volatile uint32_t rxCount       = 0;

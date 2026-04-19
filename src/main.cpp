@@ -637,14 +637,14 @@ void syncNATState() {
 void loadConfig() {
     prefs.begin("fsd", true);  // read-only
     cfg.fsdEnable          = prefs.getBool("fsdEn", true);
-    cfg.hwMode             = prefs.getUChar("hwMode", 2);
+    cfg.hwMode             = prefs.getUChar("hwMode", 1);   // 默认 HW3
     cfg.speedProfile       = prefs.getUChar("spPro", 1);
     cfg.profileModeAuto    = prefs.getBool("proAuto", true);
     cfg.speedOffsetEnable  = prefs.getBool("spOffEn", false);
     cfg.speedOffsetPercent = prefs.getUChar("spOffPct", 0);
     cfg.isaChimeSuppress   = prefs.getBool("isaChm", false);
     cfg.emergencyDetection = prefs.getBool("emDet", true);
-    cfg.chinaMode          = prefs.getBool("cnMode", false);
+    cfg.chinaMode          = prefs.getBool("cnMode", true);  // 默认开启 chinaMode
     copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), prefs.getString("apSsid", DEFAULT_AP_SSID));
     copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), prefs.getString("apPass", DEFAULT_AP_PASS));
     clearSavedUpstreamNetworks();
