@@ -23,3 +23,8 @@ sdkconfig.*
 # Python cache
 __pycache__/
 *.pyc
+
+.pio-core
+*.bin
+.playwright-mcp
+.codex/skills
