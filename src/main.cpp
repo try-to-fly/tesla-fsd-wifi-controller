@@ -741,12 +741,15 @@ String buildStatusJson() {
     bool modifiedActive = modifiedSeen && modifiedAgeMs <= CAN_ACTIVITY_WINDOW_MS;
     bool canReady = cfg.canOK;
     bool canHealthy = canReady && rxActive;
+    bool vehicleSpeedSeen = cfg.lastVehicleSpeedMillis != 0;
+    uint32_t vehicleSpeedAgeMs = vehicleSpeedSeen ? now - cfg.lastVehicleSpeedMillis : 0;
+    bool vehicleSpeedValid = vehicleSpeedSeen && vehicleSpeedAgeMs <= VEHICLE_SPEED_STALE_MS;
     uint32_t dnsBlockedCount = 0;
     size_t dnsBlockedRecentCount = 0;
     String dnsBlockedRequests = buildBlockedDnsRequestsJson(dnsBlockedCount, dnsBlockedRecentCount);
     String json;
 
-    json.reserve(7000);
+    json.reserve(7300);
     json += "{";
     json += "\"rx\":";
     json += String((unsigned)cfg.rxCount);
@@ -792,6 +795,14 @@ String buildStatusJson() {
     json += String((int)cfg.detectedSpeedSource);
     json += ",\"appliedSpeedOffsetKph\":";
     json += String((int)cfg.appliedSpeedOffsetKph);
+    json += ",\"vehicleSpeedKph\":";
+    json += String(static_cast<float>(cfg.vehicleSpeedCentiKph) / 100.0f, 1);
+    json += ",\"vehicleSpeedSource\":";
+    json += String((int)cfg.vehicleSpeedSource);
+    json += ",\"vehicleSpeedAgeMs\":";
+    json += vehicleSpeedSeen ? String((unsigned)vehicleSpeedAgeMs) : "null";
+    json += ",\"vehicleSpeedValid\":";
+    json += (vehicleSpeedValid ? "true" : "false");
     json += ",\"isaChime\":";
     json += String((int)cfg.isaChimeSuppress);
     json += ",\"emergencyDet\":";

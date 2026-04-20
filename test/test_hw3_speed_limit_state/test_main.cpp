@@ -58,6 +58,35 @@ CanFrame makeHW3Index2Frame() {
     return frame;
 }
 
+void writeUnsignedLittleEndian(CanFrame& frame, uint8_t startBit, uint8_t bitLength, uint32_t value) {
+    for (uint8_t i = 0; i < bitLength; ++i) {
+        uint8_t absoluteBit = static_cast<uint8_t>(startBit + i);
+        uint8_t byteIndex = absoluteBit / 8U;
+        uint8_t bitIndex = absoluteBit % 8U;
+        uint8_t mask = static_cast<uint8_t>(1U << bitIndex);
+        if ((value >> i) & 0x01U) {
+            frame.data[byteIndex] |= mask;
+        } else {
+            frame.data[byteIndex] &= static_cast<uint8_t>(~mask);
+        }
+    }
+}
+
+CanFrame makeESPVehicleSpeedFrame(uint16_t rawSpeed, bool valid = true) {
+    CanFrame frame;
+    frame.id = ESP_VEHICLE_SPEED_ID;
+    writeUnsignedLittleEndian(frame, 40, 1, valid ? 1U : 0U);
+    writeUnsignedLittleEndian(frame, 42, 10, rawSpeed);
+    return frame;
+}
+
+CanFrame makeDIVehicleSpeedFrame(uint16_t rawSpeed) {
+    CanFrame frame;
+    frame.id = DI_VEHICLE_SPEED_ID;
+    writeUnsignedLittleEndian(frame, 12, 12, rawSpeed);
+    return frame;
+}
+
 uint16_t decodeInjectedOffsetField(const CanFrame& frame) {
     return static_cast<uint16_t>(((frame.data[0] >> 6) & 0x03) | ((frame.data[1] & 0x3F) << 2));
 }
@@ -73,6 +102,9 @@ void resetRuntimeConfig() {
     cfg.detectedSpeedLimitKph = 0;
     cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::None);
     cfg.appliedSpeedOffsetKph = 0;
+    cfg.vehicleSpeedCentiKph = 0;
+    cfg.vehicleSpeedSource = static_cast<uint8_t>(VehicleSpeedSource::None);
+    cfg.lastVehicleSpeedMillis = 0;
     cfg.rxCount = 0;
     cfg.modifiedCount = 0;
     cfg.errorCount = 0;
@@ -89,6 +121,7 @@ void resetRuntimeConfig() {
 void setUp() {
     resetRuntimeConfig();
     resetHW3SpeedLimitState();
+    resetVehicleSpeedState();
 }
 
 void tearDown() {}
@@ -195,6 +228,78 @@ void test_hw3_send_failure_increments_error_without_updating_modified_millis() {
     TEST_ASSERT_EQUAL_UINT32(0, cfg.lastModifiedMillis);
 }
 
+void test_handle_message_uses_esp_vehicle_speed_when_available() {
+    FakeCanDriver driver;
+    CanFrame frame = makeESPVehicleSpeedFrame(135);
+
+    fakeMillisValue = 2200;
+    handleMessage(frame, driver);
+
+    TEST_ASSERT_EQUAL_UINT16(6750, cfg.vehicleSpeedCentiKph);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(VehicleSpeedSource::ESP), cfg.vehicleSpeedSource);
+    TEST_ASSERT_EQUAL_UINT32(2200, cfg.lastVehicleSpeedMillis);
+}
+
+void test_handle_message_falls_back_to_di_vehicle_speed() {
+    FakeCanDriver driver;
+    CanFrame frame = makeDIVehicleSpeedFrame(1250);
+
+    fakeMillisValue = 3300;
+    handleMessage(frame, driver);
+
+    TEST_ASSERT_EQUAL_UINT16(6000, cfg.vehicleSpeedCentiKph);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(VehicleSpeedSource::DI), cfg.vehicleSpeedSource);
+    TEST_ASSERT_EQUAL_UINT32(3300, cfg.lastVehicleSpeedMillis);
+}
+
+void test_di_vehicle_speed_does_not_override_fresh_esp_source() {
+    FakeCanDriver driver;
+    CanFrame espFrame = makeESPVehicleSpeedFrame(140);
+    CanFrame diFrame = makeDIVehicleSpeedFrame(1250);
+
+    fakeMillisValue = 4000;
+    handleMessage(espFrame, driver);
+    fakeMillisValue = 4200;
+    handleMessage(diFrame, driver);
+
+    TEST_ASSERT_EQUAL_UINT16(7000, cfg.vehicleSpeedCentiKph);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(VehicleSpeedSource::ESP), cfg.vehicleSpeedSource);
+    TEST_ASSERT_EQUAL_UINT32(4000, cfg.lastVehicleSpeedMillis);
+}
+
+void test_invalid_esp_vehicle_speed_immediately_falls_back_to_fresh_di() {
+    FakeCanDriver driver;
+    CanFrame diFrame = makeDIVehicleSpeedFrame(1250);
+    CanFrame espFrame = makeESPVehicleSpeedFrame(140);
+    CanFrame invalidEspFrame = makeESPVehicleSpeedFrame(0, false);
+
+    fakeMillisValue = 5000;
+    handleMessage(diFrame, driver);
+    fakeMillisValue = 5100;
+    handleMessage(espFrame, driver);
+    fakeMillisValue = 5200;
+    handleMessage(invalidEspFrame, driver);
+
+    TEST_ASSERT_EQUAL_UINT16(6000, cfg.vehicleSpeedCentiKph);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(VehicleSpeedSource::DI), cfg.vehicleSpeedSource);
+    TEST_ASSERT_EQUAL_UINT32(5000, cfg.lastVehicleSpeedMillis);
+}
+
+void test_invalid_esp_vehicle_speed_clears_telemetry_without_di_fallback() {
+    FakeCanDriver driver;
+    CanFrame espFrame = makeESPVehicleSpeedFrame(140);
+    CanFrame invalidEspFrame = makeESPVehicleSpeedFrame(0, false);
+
+    fakeMillisValue = 6000;
+    handleMessage(espFrame, driver);
+    fakeMillisValue = 6100;
+    handleMessage(invalidEspFrame, driver);
+
+    TEST_ASSERT_EQUAL_UINT16(0, cfg.vehicleSpeedCentiKph);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(VehicleSpeedSource::None), cfg.vehicleSpeedSource);
+    TEST_ASSERT_EQUAL_UINT32(0, cfg.lastVehicleSpeedMillis);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_hw3_can_resolve_limit_before_760_arrives);
@@ -204,5 +309,10 @@ int main() {
     RUN_TEST(test_handle_message_tracks_last_rx_millis);
     RUN_TEST(test_hw3_send_success_tracks_last_modified_millis);
     RUN_TEST(test_hw3_send_failure_increments_error_without_updating_modified_millis);
+    RUN_TEST(test_handle_message_uses_esp_vehicle_speed_when_available);
+    RUN_TEST(test_handle_message_falls_back_to_di_vehicle_speed);
+    RUN_TEST(test_di_vehicle_speed_does_not_override_fresh_esp_source);
+    RUN_TEST(test_invalid_esp_vehicle_speed_immediately_falls_back_to_fresh_di);
+    RUN_TEST(test_invalid_esp_vehicle_speed_clears_telemetry_without_di_fallback);
     return UNITY_END();
 }

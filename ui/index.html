@@ -54,26 +54,108 @@
 
       <main class="dashboard-main">
         <section class="hero-card speed-card">
-          <div class="section-tag">首屏控制</div>
+          <div class="section-tag">实时速度</div>
           <div class="speed-card-head">
             <div>
-              <h2>HW3 智能限速</h2>
+              <h2>当前车速</h2>
+              <p>上方看实时车速，下方看最近 30 秒变化曲线，并估算纵向加速度。</p>
             </div>
             <div class="hardware-pill" id="hwModeBadge">硬件 --</div>
           </div>
 
           <div class="speed-hero">
-            <div class="speed-quick">
-              <div class="speed-quick-label">当前增量</div>
-              <div class="speed-quick-value" id="speedOffsetDisplay">
-                +0 km/h
+            <div class="speed-quick speed-live-card">
+              <div class="speed-quick-label">车辆当前速度</div>
+              <div class="speed-quick-stack">
+                <div class="speed-quick-value" id="vehicleSpeedDisplay">--</div>
+                <div class="speed-quick-unit">km/h</div>
               </div>
-              <div class="speed-quick-note" id="speedOffsetState">读取中</div>
+              <div class="speed-quick-note" id="vehicleSpeedMeta">
+                等待 CAN 车速
+              </div>
+            </div>
+
+            <div class="speed-chart-card">
+              <div class="speed-chart-head">
+                <span>最近 30 秒速度变化</span>
+                <span id="vehicleSpeedTrendMeta">波动 --</span>
+              </div>
+              <div class="speed-chart-wrap">
+                <svg
+                  class="speed-chart"
+                  viewBox="0 0 320 128"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <line
+                    class="speed-chart-grid"
+                    x1="0"
+                    y1="20"
+                    x2="320"
+                    y2="20"
+                  ></line>
+                  <line
+                    class="speed-chart-grid"
+                    x1="0"
+                    y1="64"
+                    x2="320"
+                    y2="64"
+                  ></line>
+                  <line
+                    class="speed-chart-grid"
+                    x1="0"
+                    y1="108"
+                    x2="320"
+                    y2="108"
+                  ></line>
+                  <path
+                    id="vehicleSpeedChartArea"
+                    class="speed-chart-area"
+                    d=""
+                  ></path>
+                  <polyline
+                    id="vehicleSpeedChartLine"
+                    class="speed-chart-line"
+                    points=""
+                  ></polyline>
+                  <circle
+                    id="vehicleSpeedChartDot"
+                    class="speed-chart-dot"
+                    cx="0"
+                    cy="0"
+                    r="4"
+                  ></circle>
+                </svg>
+                <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
+                  等待最近车速样本
+                </div>
+              </div>
+              <div class="speed-chart-meta">
+                <span id="vehicleSpeedChartMin">最低 --</span>
+                <span>最近 30 秒</span>
+                <span id="vehicleSpeedChartMax">最高 --</span>
+              </div>
             </div>
           </div>
 
           <div class="hero-controls">
             <div class="speed-readonly-grid">
+              <article class="speed-info-tile">
+                <span class="speed-info-label">纵向加速度</span>
+                <strong class="speed-info-value" id="vehicleAccelerationDisplay"
+                  >--</strong
+                >
+                <span class="speed-info-sub" id="vehicleAccelerationMeta"
+                  >按最近速度变化估算</span
+                >
+              </article>
+              <article class="speed-info-tile">
+                <span class="speed-info-label">当前增量</span>
+                <strong class="speed-info-value" id="speedOffsetDisplay"
+                  >+0 km/h</strong
+                >
+                <span class="speed-info-sub" id="speedOffsetState">读取中</span>
+              </article>
               <article class="speed-info-tile">
                 <span class="speed-info-label">识别限速</span>
                 <strong class="speed-info-value" id="detectedSpeedLimitDisplay"
@@ -81,7 +163,7 @@
                 >
               </article>
               <article class="speed-info-tile">
-                <span class="speed-info-label">信号来源</span>
+                <span class="speed-info-label">限速来源</span>
                 <strong
                   class="speed-info-value speed-info-meta"
                   id="detectedSpeedSourceDisplay"

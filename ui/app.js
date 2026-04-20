@@ -6,7 +6,11 @@ let latestBlockedDnsRequests=[];
 let latestStatusUptime=0;
 let lastCanCounters=null;
 let activePickerId='';
+let vehicleSpeedHistory=[];
+let lastVehicleSpeedUptimeMs=null;
 const COUNTER_WRAP=4294967296;
+const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
+const MAX_VEHICLE_SPEED_POINTS=40;
 const hwModeLabels={
   '0':'LEGACY',
   '1':'HW3',
@@ -47,6 +51,13 @@ function setMetricValue(id,text,className){
   if(!el)return;
   el.textContent=text;
   el.className='metric-value '+className;
+}
+
+function setSpeedInfoValue(id,text,className){
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.textContent=text;
+  el.className='speed-info-value '+className;
 }
 
 function formatChipTemp(current,average){
@@ -162,6 +173,190 @@ function getSpeedSourceLabel(value){
     case '3': return '地图限速';
     default: return '';
   }
+}
+
+function getVehicleSpeedSourceLabel(value){
+  switch(String(value)){
+    case '1': return 'ESP 车身速度';
+    case '2': return 'DI 仪表车速';
+    default: return '';
+  }
+}
+
+function formatVehicleSpeedAge(ageMs){
+  if(typeof ageMs!=='number'||!Number.isFinite(ageMs)||ageMs<0)return '';
+  if(ageMs<120)return '刚更新';
+  if(ageMs<1000)return String(Math.round(ageMs/10)*10)+' ms前';
+  if(ageMs<10000)return (ageMs/1000).toFixed(1)+' 秒前';
+  if(ageMs<60000)return String(Math.round(ageMs/1000))+' 秒前';
+  return String(Math.round(ageMs/60000))+' 分钟前';
+}
+
+function formatVehicleSpeedValue(speedKph){
+  if(typeof speedKph!=='number'||!Number.isFinite(speedKph))return '--';
+  return speedKph>=100?String(Math.round(speedKph)):speedKph.toFixed(1);
+}
+
+function formatVehicleSpeedLabel(speedKph){
+  if(typeof speedKph!=='number'||!Number.isFinite(speedKph))return '--';
+  return formatVehicleSpeedValue(speedKph)+' km/h';
+}
+
+function trimVehicleSpeedHistory(uptimeMs){
+  const minTime=Math.max(0,uptimeMs-VEHICLE_SPEED_HISTORY_WINDOW_MS);
+  vehicleSpeedHistory=vehicleSpeedHistory.filter(point=>point.timeMs>=minTime);
+  if(vehicleSpeedHistory.length>MAX_VEHICLE_SPEED_POINTS){
+    vehicleSpeedHistory=vehicleSpeedHistory.slice(-MAX_VEHICLE_SPEED_POINTS);
+  }
+}
+
+function resetVehicleSpeedHistory(){
+  vehicleSpeedHistory=[];
+  lastVehicleSpeedUptimeMs=null;
+}
+
+function updateVehicleSpeedHistory(data){
+  const uptimeMs=Math.max(0,Number(data&&data.uptime||0)*1000);
+  if(lastVehicleSpeedUptimeMs!==null&&uptimeMs<lastVehicleSpeedUptimeMs){
+    resetVehicleSpeedHistory();
+  }
+  lastVehicleSpeedUptimeMs=uptimeMs;
+  trimVehicleSpeedHistory(uptimeMs);
+
+  const speedKph=Number(data&&data.vehicleSpeedKph);
+  const speedValid=!!(data&&data.vehicleSpeedValid)&&Number.isFinite(speedKph);
+  if(!speedValid)return;
+
+  const lastPoint=vehicleSpeedHistory[vehicleSpeedHistory.length-1];
+  if(lastPoint&&lastPoint.timeMs===uptimeMs){
+    lastPoint.kph=speedKph;
+    return;
+  }
+
+  vehicleSpeedHistory.push({timeMs:uptimeMs,kph:speedKph});
+  trimVehicleSpeedHistory(uptimeMs);
+}
+
+function computeVehicleAccelerationG(){
+  if(vehicleSpeedHistory.length<2)return null;
+  const latest=vehicleSpeedHistory[vehicleSpeedHistory.length-1];
+  let anchor=null;
+
+  for(let i=vehicleSpeedHistory.length-2;i>=0;i--){
+    const candidate=vehicleSpeedHistory[i];
+    const dtSec=(latest.timeMs-candidate.timeMs)/1000;
+    if(dtSec>=1.5&&dtSec<=4){
+      anchor=candidate;
+      break;
+    }
+  }
+
+  if(!anchor)anchor=vehicleSpeedHistory[vehicleSpeedHistory.length-2];
+  const dtSec=(latest.timeMs-anchor.timeMs)/1000;
+  if(dtSec<=0||dtSec>5)return null;
+
+  const accelMps2=((latest.kph-anchor.kph)/3.6)/dtSec;
+  return accelMps2/9.80665;
+}
+
+function updateVehicleSpeedChart(){
+  const areaEl=document.getElementById('vehicleSpeedChartArea');
+  const lineEl=document.getElementById('vehicleSpeedChartLine');
+  const dotEl=document.getElementById('vehicleSpeedChartDot');
+  const emptyEl=document.getElementById('vehicleSpeedChartEmpty');
+  if(!areaEl||!lineEl||!dotEl||!emptyEl)return;
+
+  if(vehicleSpeedHistory.length<2){
+    areaEl.setAttribute('d','');
+    lineEl.setAttribute('points','');
+    dotEl.style.opacity='0';
+    emptyEl.classList.add('visible');
+    setTextIfPresent('vehicleSpeedTrendMeta','波动 --');
+    setTextIfPresent('vehicleSpeedChartMin','最低 --');
+    setTextIfPresent('vehicleSpeedChartMax','最高 --');
+    return;
+  }
+
+  const width=320;
+  const top=16;
+  const bottom=108;
+  const height=bottom-top;
+  const latestTime=vehicleSpeedHistory[vehicleSpeedHistory.length-1].timeMs;
+  const startTime=Math.max(0,latestTime-VEHICLE_SPEED_HISTORY_WINDOW_MS);
+  const minKph=Math.min(...vehicleSpeedHistory.map(point=>point.kph));
+  const maxKph=Math.max(...vehicleSpeedHistory.map(point=>point.kph));
+  const rangeKph=Math.max(4,maxKph-minKph);
+
+  const points=vehicleSpeedHistory.map(point=>{
+    const x=((point.timeMs-startTime)/VEHICLE_SPEED_HISTORY_WINDOW_MS)*width;
+    const y=bottom-((point.kph-minKph)/rangeKph)*height;
+    return {
+      x:Math.max(0,Math.min(width,x)),
+      y:Math.max(top,Math.min(bottom,y))
+    };
+  });
+
+  const polylinePoints=points.map(point=>point.x.toFixed(1)+','+point.y.toFixed(1)).join(' ');
+  const linePath=points.map((point,index)=>(index===0?'M ':' L ')+point.x.toFixed(1)+' '+point.y.toFixed(1)).join('');
+  const firstPoint=points[0];
+  const lastPoint=points[points.length-1];
+
+  areaEl.setAttribute('d',linePath+' L '+lastPoint.x.toFixed(1)+' '+String(bottom)+' L '+firstPoint.x.toFixed(1)+' '+String(bottom)+' Z');
+  lineEl.setAttribute('points',polylinePoints);
+  dotEl.setAttribute('cx',lastPoint.x.toFixed(1));
+  dotEl.setAttribute('cy',lastPoint.y.toFixed(1));
+  dotEl.style.opacity='1';
+  emptyEl.classList.remove('visible');
+  setTextIfPresent('vehicleSpeedTrendMeta','波动 '+formatVehicleSpeedLabel(maxKph-minKph));
+  setTextIfPresent('vehicleSpeedChartMin','最低 '+formatVehicleSpeedLabel(minKph));
+  setTextIfPresent('vehicleSpeedChartMax','最高 '+formatVehicleSpeedLabel(maxKph));
+}
+
+function updateVehicleAcceleration(speedValid){
+  if(!speedValid){
+    setSpeedInfoValue('vehicleAccelerationDisplay','--','status-no');
+    setTextIfPresent('vehicleAccelerationMeta','等待连续车速样本');
+    return;
+  }
+
+  const accelG=computeVehicleAccelerationG();
+  if(accelG===null||!Number.isFinite(accelG)){
+    setSpeedInfoValue('vehicleAccelerationDisplay','--','status-no');
+    setTextIfPresent('vehicleAccelerationMeta','至少需要 2 个连续速度点');
+    return;
+  }
+
+  let className='status-no';
+  if(accelG>=0.02)className='status-ok';
+  else if(accelG<=-0.02)className='status-warn';
+
+  const accelLabel=(accelG>0?'+':'')+accelG.toFixed(2)+' g';
+  setSpeedInfoValue('vehicleAccelerationDisplay',accelLabel,className);
+  setTextIfPresent('vehicleAccelerationMeta','按最近 2-4 秒速度变化估算');
+}
+
+function updateVehicleSpeedTelemetry(data){
+  updateVehicleSpeedHistory(data);
+
+  const speedKph=Number(data&&data.vehicleSpeedKph);
+  const speedValid=!!(data&&data.vehicleSpeedValid)&&Number.isFinite(speedKph);
+  const speedEl=document.getElementById('vehicleSpeedDisplay');
+  if(speedEl){
+    speedEl.textContent=speedValid?formatVehicleSpeedValue(speedKph):'--';
+  }
+
+  if(speedValid){
+    const sourceLabel=getVehicleSpeedSourceLabel(data.vehicleSpeedSource)||'CAN 车速';
+    const ageLabel=formatVehicleSpeedAge(Number(data.vehicleSpeedAgeMs));
+    setTextIfPresent('vehicleSpeedMeta',[sourceLabel,ageLabel].filter(Boolean).join(' · '));
+  }else if(typeof data.vehicleSpeedAgeMs==='number'&&Number.isFinite(data.vehicleSpeedAgeMs)){
+    setTextIfPresent('vehicleSpeedMeta','车速数据暂停 · 上次更新 '+formatVehicleSpeedAge(data.vehicleSpeedAgeMs));
+  }else{
+    setTextIfPresent('vehicleSpeedMeta','等待 CAN 车速');
+  }
+
+  updateVehicleSpeedChart();
+  updateVehicleAcceleration(speedValid);
 }
 
 function syncDashboardSummary(data){
@@ -455,6 +650,7 @@ function poll(){
     document.getElementById('sUptime').textContent=h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒';
 
     updateCanStatus(d);
+    updateVehicleSpeedTelemetry(d);
 
     let fsdEl=document.getElementById('sFSD');
     fsdEl.textContent=d.fsdTriggered?'是':'否';

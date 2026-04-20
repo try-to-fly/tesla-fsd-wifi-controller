@@ -284,17 +284,22 @@ h1{
 .speed-hero{
   display:grid;
   grid-template-columns:1fr;
-  gap:12px;
+  gap:10px;
 }
 
 .speed-quick{
   min-width:0;
-  padding:14px 16px 16px;
+  padding:16px 18px 18px;
   border-radius:22px;
   background:
-    linear-gradient(135deg,rgba(227,25,55,.16),transparent 44%),
+    linear-gradient(135deg,rgba(227,25,55,.18),transparent 42%),
+    radial-gradient(circle at 88% 12%,rgba(95,216,255,.16),transparent 32%),
     linear-gradient(180deg,rgba(18,29,51,.96) 0%,rgba(10,16,30,.96) 100%);
   border:1px solid rgba(227,25,55,.2);
+}
+
+.speed-live-card{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
 }
 
 .speed-quick-label{
@@ -303,12 +308,26 @@ h1{
   letter-spacing:1.2px;
 }
 
+.speed-quick-stack{
+  display:flex;
+  align-items:flex-end;
+  gap:10px;
+}
+
 .speed-quick-value{
-  margin-top:6px;
-  font-size:clamp(40px,5vw,58px);
-  line-height:.95;
+  margin-top:8px;
+  font-size:clamp(68px,8vw,94px);
+  line-height:.86;
   font-weight:800;
-  letter-spacing:-1.8px;
+  letter-spacing:-2.8px;
+}
+
+.speed-quick-unit{
+  padding-bottom:10px;
+  font-size:18px;
+  line-height:1;
+  color:var(--muted-strong);
+  font-weight:700;
 }
 
 .speed-quick-note{
@@ -317,9 +336,88 @@ h1{
   color:var(--muted-strong);
 }
 
-.hero-actions{
-  display:grid;
+.speed-chart-card{
+  min-width:0;
+  padding:12px 14px 14px;
+  border-radius:22px;
+  background:linear-gradient(180deg,rgba(11,19,35,.94) 0%,rgba(7,13,24,.98) 100%);
+  border:1px solid rgba(95,216,255,.16);
+}
+
+.speed-chart-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
   gap:10px;
+  font-size:12px;
+  color:var(--muted);
+}
+
+.speed-chart-wrap{
+  position:relative;
+  margin-top:10px;
+}
+
+.speed-chart{
+  display:block;
+  width:100%;
+  height:128px;
+}
+
+.speed-chart-grid{
+  stroke:rgba(125,211,252,.12);
+  stroke-width:1;
+  stroke-dasharray:5 7;
+}
+
+.speed-chart-area{
+  fill:rgba(95,216,255,.14);
+}
+
+.speed-chart-line{
+  fill:none;
+  stroke:var(--cyan);
+  stroke-width:3;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  filter:drop-shadow(0 0 10px rgba(95,216,255,.32));
+}
+
+.speed-chart-dot{
+  fill:var(--text);
+  stroke:var(--cyan);
+  stroke-width:3;
+  opacity:0;
+}
+
+.speed-chart-empty{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:16px;
+  color:var(--muted);
+  font-size:12px;
+  background:linear-gradient(180deg,rgba(4,10,20,.18) 0%,rgba(4,10,20,.58) 100%);
+  border:1px dashed rgba(125,211,252,.14);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .2s ease;
+}
+
+.speed-chart-empty.visible{
+  opacity:1;
+}
+
+.speed-chart-meta{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-top:8px;
+  font-size:12px;
+  color:var(--muted);
 }
 
 .hero-controls{
@@ -367,6 +465,14 @@ h1{
   font-size:14px;
   line-height:1.5;
   font-weight:700;
+  color:var(--muted-strong);
+}
+
+.speed-info-sub{
+  display:block;
+  margin-top:8px;
+  font-size:12px;
+  line-height:1.45;
   color:var(--muted-strong);
 }
 
@@ -1202,7 +1308,11 @@ select,
     padding:14px 14px 16px;
   }
   .speed-quick-value{
-    font-size:clamp(36px,6vw,48px);
+    font-size:clamp(56px,8vw,72px);
+  }
+  .speed-quick-unit{
+    padding-bottom:8px;
+    font-size:16px;
   }
   .metric-value{
     font-size:clamp(24px,4.8vw,32px);
@@ -1303,6 +1413,13 @@ select,
     min-height:42px;
     font-size:14px;
   }
+  .speed-chart{
+    height:116px;
+  }
+  .speed-chart-head,
+  .speed-chart-meta{
+    font-size:11px;
+  }
 }
 
 @media (max-width:420px){
@@ -1319,7 +1436,11 @@ select,
     grid-template-columns:repeat(2,minmax(0,1fr));
   }
   .speed-quick-value{
-    font-size:clamp(34px,13vw,42px);
+    font-size:clamp(50px,15vw,62px);
+  }
+  .speed-quick-unit{
+    padding-bottom:6px;
+    font-size:14px;
   }
   .metric-value{
     font-size:clamp(22px,10vw,30px);
@@ -1362,7 +1483,7 @@ select,
   .metric-panel{min-height:94px}
   .metric-panel.wide{min-height:86px}
   .live-item{min-height:72px}
-  .speed-quick-value{font-size:48px}
+  .speed-quick-value{font-size:60px}
   .speed-card-head p,
   .metrics-head p,
   .page-subtitle{font-size:12px}
@@ -1424,26 +1545,108 @@ select,
 
       <main class="dashboard-main">
         <section class="hero-card speed-card">
-          <div class="section-tag">首屏控制</div>
+          <div class="section-tag">实时速度</div>
           <div class="speed-card-head">
             <div>
-              <h2>HW3 智能限速</h2>
+              <h2>当前车速</h2>
+              <p>上方看实时车速，下方看最近 30 秒变化曲线，并估算纵向加速度。</p>
             </div>
             <div class="hardware-pill" id="hwModeBadge">硬件 --</div>
           </div>
 
           <div class="speed-hero">
-            <div class="speed-quick">
-              <div class="speed-quick-label">当前增量</div>
-              <div class="speed-quick-value" id="speedOffsetDisplay">
-                +0 km/h
+            <div class="speed-quick speed-live-card">
+              <div class="speed-quick-label">车辆当前速度</div>
+              <div class="speed-quick-stack">
+                <div class="speed-quick-value" id="vehicleSpeedDisplay">--</div>
+                <div class="speed-quick-unit">km/h</div>
               </div>
-              <div class="speed-quick-note" id="speedOffsetState">读取中</div>
+              <div class="speed-quick-note" id="vehicleSpeedMeta">
+                等待 CAN 车速
+              </div>
+            </div>
+
+            <div class="speed-chart-card">
+              <div class="speed-chart-head">
+                <span>最近 30 秒速度变化</span>
+                <span id="vehicleSpeedTrendMeta">波动 --</span>
+              </div>
+              <div class="speed-chart-wrap">
+                <svg
+                  class="speed-chart"
+                  viewBox="0 0 320 128"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <line
+                    class="speed-chart-grid"
+                    x1="0"
+                    y1="20"
+                    x2="320"
+                    y2="20"
+                  ></line>
+                  <line
+                    class="speed-chart-grid"
+                    x1="0"
+                    y1="64"
+                    x2="320"
+                    y2="64"
+                  ></line>
+                  <line
+                    class="speed-chart-grid"
+                    x1="0"
+                    y1="108"
+                    x2="320"
+                    y2="108"
+                  ></line>
+                  <path
+                    id="vehicleSpeedChartArea"
+                    class="speed-chart-area"
+                    d=""
+                  ></path>
+                  <polyline
+                    id="vehicleSpeedChartLine"
+                    class="speed-chart-line"
+                    points=""
+                  ></polyline>
+                  <circle
+                    id="vehicleSpeedChartDot"
+                    class="speed-chart-dot"
+                    cx="0"
+                    cy="0"
+                    r="4"
+                  ></circle>
+                </svg>
+                <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
+                  等待最近车速样本
+                </div>
+              </div>
+              <div class="speed-chart-meta">
+                <span id="vehicleSpeedChartMin">最低 --</span>
+                <span>最近 30 秒</span>
+                <span id="vehicleSpeedChartMax">最高 --</span>
+              </div>
             </div>
           </div>
 
           <div class="hero-controls">
             <div class="speed-readonly-grid">
+              <article class="speed-info-tile">
+                <span class="speed-info-label">纵向加速度</span>
+                <strong class="speed-info-value" id="vehicleAccelerationDisplay"
+                  >--</strong
+                >
+                <span class="speed-info-sub" id="vehicleAccelerationMeta"
+                  >按最近速度变化估算</span
+                >
+              </article>
+              <article class="speed-info-tile">
+                <span class="speed-info-label">当前增量</span>
+                <strong class="speed-info-value" id="speedOffsetDisplay"
+                  >+0 km/h</strong
+                >
+                <span class="speed-info-sub" id="speedOffsetState">读取中</span>
+              </article>
               <article class="speed-info-tile">
                 <span class="speed-info-label">识别限速</span>
                 <strong class="speed-info-value" id="detectedSpeedLimitDisplay"
@@ -1451,7 +1654,7 @@ select,
                 >
               </article>
               <article class="speed-info-tile">
-                <span class="speed-info-label">信号来源</span>
+                <span class="speed-info-label">限速来源</span>
                 <strong
                   class="speed-info-value speed-info-meta"
                   id="detectedSpeedSourceDisplay"
@@ -2036,7 +2239,11 @@ let latestBlockedDnsRequests=[];
 let latestStatusUptime=0;
 let lastCanCounters=null;
 let activePickerId='';
+let vehicleSpeedHistory=[];
+let lastVehicleSpeedUptimeMs=null;
 const COUNTER_WRAP=4294967296;
+const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
+const MAX_VEHICLE_SPEED_POINTS=40;
 const hwModeLabels={
   '0':'LEGACY',
   '1':'HW3',
@@ -2077,6 +2284,13 @@ function setMetricValue(id,text,className){
   if(!el)return;
   el.textContent=text;
   el.className='metric-value '+className;
+}
+
+function setSpeedInfoValue(id,text,className){
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.textContent=text;
+  el.className='speed-info-value '+className;
 }
 
 function formatChipTemp(current,average){
@@ -2192,6 +2406,190 @@ function getSpeedSourceLabel(value){
     case '3': return '地图限速';
     default: return '';
   }
+}
+
+function getVehicleSpeedSourceLabel(value){
+  switch(String(value)){
+    case '1': return 'ESP 车身速度';
+    case '2': return 'DI 仪表车速';
+    default: return '';
+  }
+}
+
+function formatVehicleSpeedAge(ageMs){
+  if(typeof ageMs!=='number'||!Number.isFinite(ageMs)||ageMs<0)return '';
+  if(ageMs<120)return '刚更新';
+  if(ageMs<1000)return String(Math.round(ageMs/10)*10)+' ms前';
+  if(ageMs<10000)return (ageMs/1000).toFixed(1)+' 秒前';
+  if(ageMs<60000)return String(Math.round(ageMs/1000))+' 秒前';
+  return String(Math.round(ageMs/60000))+' 分钟前';
+}
+
+function formatVehicleSpeedValue(speedKph){
+  if(typeof speedKph!=='number'||!Number.isFinite(speedKph))return '--';
+  return speedKph>=100?String(Math.round(speedKph)):speedKph.toFixed(1);
+}
+
+function formatVehicleSpeedLabel(speedKph){
+  if(typeof speedKph!=='number'||!Number.isFinite(speedKph))return '--';
+  return formatVehicleSpeedValue(speedKph)+' km/h';
+}
+
+function trimVehicleSpeedHistory(uptimeMs){
+  const minTime=Math.max(0,uptimeMs-VEHICLE_SPEED_HISTORY_WINDOW_MS);
+  vehicleSpeedHistory=vehicleSpeedHistory.filter(point=>point.timeMs>=minTime);
+  if(vehicleSpeedHistory.length>MAX_VEHICLE_SPEED_POINTS){
+    vehicleSpeedHistory=vehicleSpeedHistory.slice(-MAX_VEHICLE_SPEED_POINTS);
+  }
+}
+
+function resetVehicleSpeedHistory(){
+  vehicleSpeedHistory=[];
+  lastVehicleSpeedUptimeMs=null;
+}
+
+function updateVehicleSpeedHistory(data){
+  const uptimeMs=Math.max(0,Number(data&&data.uptime||0)*1000);
+  if(lastVehicleSpeedUptimeMs!==null&&uptimeMs<lastVehicleSpeedUptimeMs){
+    resetVehicleSpeedHistory();
+  }
+  lastVehicleSpeedUptimeMs=uptimeMs;
+  trimVehicleSpeedHistory(uptimeMs);
+
+  const speedKph=Number(data&&data.vehicleSpeedKph);
+  const speedValid=!!(data&&data.vehicleSpeedValid)&&Number.isFinite(speedKph);
+  if(!speedValid)return;
+
+  const lastPoint=vehicleSpeedHistory[vehicleSpeedHistory.length-1];
+  if(lastPoint&&lastPoint.timeMs===uptimeMs){
+    lastPoint.kph=speedKph;
+    return;
+  }
+
+  vehicleSpeedHistory.push({timeMs:uptimeMs,kph:speedKph});
+  trimVehicleSpeedHistory(uptimeMs);
+}
+
+function computeVehicleAccelerationG(){
+  if(vehicleSpeedHistory.length<2)return null;
+  const latest=vehicleSpeedHistory[vehicleSpeedHistory.length-1];
+  let anchor=null;
+
+  for(let i=vehicleSpeedHistory.length-2;i>=0;i--){
+    const candidate=vehicleSpeedHistory[i];
+    const dtSec=(latest.timeMs-candidate.timeMs)/1000;
+    if(dtSec>=1.5&&dtSec<=4){
+      anchor=candidate;
+      break;
+    }
+  }
+
+  if(!anchor)anchor=vehicleSpeedHistory[vehicleSpeedHistory.length-2];
+  const dtSec=(latest.timeMs-anchor.timeMs)/1000;
+  if(dtSec<=0||dtSec>5)return null;
+
+  const accelMps2=((latest.kph-anchor.kph)/3.6)/dtSec;
+  return accelMps2/9.80665;
+}
+
+function updateVehicleSpeedChart(){
+  const areaEl=document.getElementById('vehicleSpeedChartArea');
+  const lineEl=document.getElementById('vehicleSpeedChartLine');
+  const dotEl=document.getElementById('vehicleSpeedChartDot');
+  const emptyEl=document.getElementById('vehicleSpeedChartEmpty');
+  if(!areaEl||!lineEl||!dotEl||!emptyEl)return;
+
+  if(vehicleSpeedHistory.length<2){
+    areaEl.setAttribute('d','');
+    lineEl.setAttribute('points','');
+    dotEl.style.opacity='0';
+    emptyEl.classList.add('visible');
+    setTextIfPresent('vehicleSpeedTrendMeta','波动 --');
+    setTextIfPresent('vehicleSpeedChartMin','最低 --');
+    setTextIfPresent('vehicleSpeedChartMax','最高 --');
+    return;
+  }
+
+  const width=320;
+  const top=16;
+  const bottom=108;
+  const height=bottom-top;
+  const latestTime=vehicleSpeedHistory[vehicleSpeedHistory.length-1].timeMs;
+  const startTime=Math.max(0,latestTime-VEHICLE_SPEED_HISTORY_WINDOW_MS);
+  const minKph=Math.min(...vehicleSpeedHistory.map(point=>point.kph));
+  const maxKph=Math.max(...vehicleSpeedHistory.map(point=>point.kph));
+  const rangeKph=Math.max(4,maxKph-minKph);
+
+  const points=vehicleSpeedHistory.map(point=>{
+    const x=((point.timeMs-startTime)/VEHICLE_SPEED_HISTORY_WINDOW_MS)*width;
+    const y=bottom-((point.kph-minKph)/rangeKph)*height;
+    return {
+      x:Math.max(0,Math.min(width,x)),
+      y:Math.max(top,Math.min(bottom,y))
+    };
+  });
+
+  const polylinePoints=points.map(point=>point.x.toFixed(1)+','+point.y.toFixed(1)).join(' ');
+  const linePath=points.map((point,index)=>(index===0?'M ':' L ')+point.x.toFixed(1)+' '+point.y.toFixed(1)).join('');
+  const firstPoint=points[0];
+  const lastPoint=points[points.length-1];
+
+  areaEl.setAttribute('d',linePath+' L '+lastPoint.x.toFixed(1)+' '+String(bottom)+' L '+firstPoint.x.toFixed(1)+' '+String(bottom)+' Z');
+  lineEl.setAttribute('points',polylinePoints);
+  dotEl.setAttribute('cx',lastPoint.x.toFixed(1));
+  dotEl.setAttribute('cy',lastPoint.y.toFixed(1));
+  dotEl.style.opacity='1';
+  emptyEl.classList.remove('visible');
+  setTextIfPresent('vehicleSpeedTrendMeta','波动 '+formatVehicleSpeedLabel(maxKph-minKph));
+  setTextIfPresent('vehicleSpeedChartMin','最低 '+formatVehicleSpeedLabel(minKph));
+  setTextIfPresent('vehicleSpeedChartMax','最高 '+formatVehicleSpeedLabel(maxKph));
+}
+
+function updateVehicleAcceleration(speedValid){
+  if(!speedValid){
+    setSpeedInfoValue('vehicleAccelerationDisplay','--','status-no');
+    setTextIfPresent('vehicleAccelerationMeta','等待连续车速样本');
+    return;
+  }
+
+  const accelG=computeVehicleAccelerationG();
+  if(accelG===null||!Number.isFinite(accelG)){
+    setSpeedInfoValue('vehicleAccelerationDisplay','--','status-no');
+    setTextIfPresent('vehicleAccelerationMeta','至少需要 2 个连续速度点');
+    return;
+  }
+
+  let className='status-no';
+  if(accelG>=0.02)className='status-ok';
+  else if(accelG<=-0.02)className='status-warn';
+
+  const accelLabel=(accelG>0?'+':'')+accelG.toFixed(2)+' g';
+  setSpeedInfoValue('vehicleAccelerationDisplay',accelLabel,className);
+  setTextIfPresent('vehicleAccelerationMeta','按最近 2-4 秒速度变化估算');
+}
+
+function updateVehicleSpeedTelemetry(data){
+  updateVehicleSpeedHistory(data);
+
+  const speedKph=Number(data&&data.vehicleSpeedKph);
+  const speedValid=!!(data&&data.vehicleSpeedValid)&&Number.isFinite(speedKph);
+  const speedEl=document.getElementById('vehicleSpeedDisplay');
+  if(speedEl){
+    speedEl.textContent=speedValid?formatVehicleSpeedValue(speedKph):'--';
+  }
+
+  if(speedValid){
+    const sourceLabel=getVehicleSpeedSourceLabel(data.vehicleSpeedSource)||'CAN 车速';
+    const ageLabel=formatVehicleSpeedAge(Number(data.vehicleSpeedAgeMs));
+    setTextIfPresent('vehicleSpeedMeta',[sourceLabel,ageLabel].filter(Boolean).join(' · '));
+  }else if(typeof data.vehicleSpeedAgeMs==='number'&&Number.isFinite(data.vehicleSpeedAgeMs)){
+    setTextIfPresent('vehicleSpeedMeta','车速数据暂停 · 上次更新 '+formatVehicleSpeedAge(data.vehicleSpeedAgeMs));
+  }else{
+    setTextIfPresent('vehicleSpeedMeta','等待 CAN 车速');
+  }
+
+  updateVehicleSpeedChart();
+  updateVehicleAcceleration(speedValid);
 }
 
 function syncDashboardSummary(data){
@@ -2485,6 +2883,7 @@ function poll(){
     document.getElementById('sUptime').textContent=h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒';
 
     updateCanStatus(d);
+    updateVehicleSpeedTelemetry(d);
 
     let fsdEl=document.getElementById('sFSD');
     fsdEl.textContent=d.fsdTriggered?'是':'否';

@@ -23,6 +23,9 @@ struct FSDConfig {
     volatile uint16_t detectedSpeedLimitKph = 0;    // resolved limit from vision/fused/map
     volatile uint8_t  detectedSpeedSource   = 0;    // SpeedLimitSource
     volatile uint8_t  appliedSpeedOffsetKph = 0;    // actual injected offset in km/h
+    volatile uint16_t vehicleSpeedCentiKph  = 0;    // current vehicle speed in 0.01 km/h
+    volatile uint8_t  vehicleSpeedSource    = 0;    // VehicleSpeedSource
+    volatile uint32_t lastVehicleSpeedMillis = 0;
 
     // Stats
     volatile uint32_t rxCount       = 0;
@@ -37,15 +40,28 @@ struct FSDConfig {
 
 static FSDConfig cfg;
 
+enum class VehicleSpeedSource : uint8_t {
+    None = 0,
+    ESP  = 1,
+    DI   = 2
+};
+
 // ── Filter IDs per HW mode ──
 static constexpr uint32_t LEGACY_IDS[] = {69, 1006};
 static constexpr uint32_t HW3_IDS[]    = {760, 921, 1016, 1021};
 static constexpr uint32_t HW4_IDS[]    = {921, 1016, 1021};
+static constexpr uint32_t ESP_VEHICLE_SPEED_ID = 341;
+static constexpr uint32_t DI_VEHICLE_SPEED_ID  = 599;
+static constexpr uint32_t VEHICLE_SPEED_STALE_MS = 2000;
 
 static uint8_t  hw3RawUserOffsetKph    = 0;
 static uint16_t hw3VisionSpeedLimitKph = 0;
 static uint16_t hw3FusedSpeedLimitKph  = 0;
 static uint16_t hw3MapSpeedLimitKph    = 0;
+static uint16_t espVehicleSpeedCentiKph = 0;
+static uint32_t espVehicleSpeedMillis = 0;
+static uint16_t diVehicleSpeedCentiKph = 0;
+static uint32_t diVehicleSpeedMillis = 0;
 
 inline const uint32_t* getFilterIds() {
     switch (cfg.hwMode) {
@@ -76,6 +92,67 @@ inline uint8_t decodeRawUserOffsetKph(const CanFrame& frame) {
     return static_cast<uint8_t>(std::max(raw, 0));
 }
 
+inline void clearVehicleSpeedTelemetry() {
+    cfg.vehicleSpeedCentiKph = 0;
+    cfg.vehicleSpeedSource = static_cast<uint8_t>(VehicleSpeedSource::None);
+    cfg.lastVehicleSpeedMillis = 0;
+}
+
+inline void publishVehicleSpeedTelemetry(
+    uint16_t centiKph,
+    VehicleSpeedSource source,
+    uint32_t capturedAtMillis
+) {
+    cfg.vehicleSpeedCentiKph = centiKph;
+    cfg.vehicleSpeedSource = static_cast<uint8_t>(source);
+    cfg.lastVehicleSpeedMillis = capturedAtMillis;
+}
+
+inline void refreshVehicleSpeedTelemetry(uint32_t now) {
+    bool espFresh = espVehicleSpeedMillis != 0 && (now - espVehicleSpeedMillis) <= VEHICLE_SPEED_STALE_MS;
+    bool diFresh = diVehicleSpeedMillis != 0 && (now - diVehicleSpeedMillis) <= VEHICLE_SPEED_STALE_MS;
+
+    if (espFresh) {
+        publishVehicleSpeedTelemetry(espVehicleSpeedCentiKph, VehicleSpeedSource::ESP, espVehicleSpeedMillis);
+        return;
+    }
+    if (diFresh) {
+        publishVehicleSpeedTelemetry(diVehicleSpeedCentiKph, VehicleSpeedSource::DI, diVehicleSpeedMillis);
+        return;
+    }
+
+    clearVehicleSpeedTelemetry();
+}
+
+inline void recordESPVehicleSpeed(const CanFrame& frame) {
+    uint32_t now = millis();
+    if (!decodeESPVehicleSpeedValid(frame)) {
+        espVehicleSpeedCentiKph = 0;
+        espVehicleSpeedMillis = 0;
+        refreshVehicleSpeedTelemetry(now);
+        return;
+    }
+
+    espVehicleSpeedCentiKph = decodeESPVehicleSpeedCentiKph(frame);
+    espVehicleSpeedMillis = now;
+    refreshVehicleSpeedTelemetry(now);
+}
+
+inline void recordDIVehicleSpeed(const CanFrame& frame) {
+    uint32_t now = millis();
+    diVehicleSpeedCentiKph = decodeDIVehicleSpeedCentiKph(frame);
+    diVehicleSpeedMillis = now;
+    refreshVehicleSpeedTelemetry(now);
+}
+
+inline void updateVehicleSpeedTelemetry(const CanFrame& frame) {
+    if (frame.id == ESP_VEHICLE_SPEED_ID) {
+        recordESPVehicleSpeed(frame);
+    } else if (frame.id == DI_VEHICLE_SPEED_ID) {
+        recordDIVehicleSpeed(frame);
+    }
+}
+
 inline void clearHW3SpeedLimitTelemetry() {
     cfg.detectedSpeedLimitKph = 0;
     cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::None);
@@ -88,6 +165,14 @@ inline void resetHW3SpeedLimitState() {
     hw3FusedSpeedLimitKph = 0;
     hw3MapSpeedLimitKph = 0;
     clearHW3SpeedLimitTelemetry();
+}
+
+inline void resetVehicleSpeedState() {
+    espVehicleSpeedCentiKph = 0;
+    espVehicleSpeedMillis = 0;
+    diVehicleSpeedCentiKph = 0;
+    diVehicleSpeedMillis = 0;
+    clearVehicleSpeedTelemetry();
 }
 
 inline void updateHW3DetectedSpeedLimit() {
@@ -244,6 +329,7 @@ static void handleHW4(CanFrame& frame, CanDriver& driver) {
 // ── Unified dispatch ──
 static void handleMessage(CanFrame& frame, CanDriver& driver) {
     recordRxActivity();
+    updateVehicleSpeedTelemetry(frame);
     if (!isFilteredId(frame.id)) return;
     switch (cfg.hwMode) {
         case 0: handleLegacy(frame, driver); break;
