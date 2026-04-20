@@ -874,7 +874,12 @@ String buildStatusJson() {
 void setupWebServer() {
     // Serve UI
     server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send(200, "text/html", INDEX_HTML);
+        req->send(
+            200,
+            "text/html; charset=utf-8",
+            reinterpret_cast<const uint8_t*>(INDEX_HTML),
+            sizeof(INDEX_HTML) - 1
+        );
     });
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
