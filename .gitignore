@@ -29,3 +29,4 @@ __pycache__/
 .playwright-mcp
 .codex/skills
 firmware
+debug-logs/

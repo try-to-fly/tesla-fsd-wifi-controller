@@ -14,6 +14,7 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <esp_log.h>
 
 #include "lwip/lwip_napt.h"
 
@@ -45,6 +46,7 @@ static constexpr float CHIP_TEMP_WARN_CLEAR_C = 62.0f;
 static constexpr float CHIP_TEMP_THROTTLE_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_PROTECT_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_EMA_ALPHA = 0.25f;
+static constexpr uint32_t DEBUG_HEARTBEAT_MS = 3000;
 
 // ── Globals ──
 static TWAIDriver     canDriver;
@@ -88,6 +90,7 @@ static volatile bool upstreamScanInProgress = false;
 static LocalAPConfig apCfg;
 
 static DNSFilterConfig dnsCfg;
+static const char* TAG = "FSD";
 
 enum class ThermalLevel : uint8_t {
     Normal = 0,
@@ -108,6 +111,16 @@ static ThermalStatus thermalStatus;
 #ifndef PIN_LED
 #define PIN_LED 2   // ESP32 DevKit onboard LED
 #endif
+
+const char* getTwaiStateName(twai_state_t state) {
+    switch (state) {
+        case TWAI_STATE_STOPPED:    return "STOPPED";
+        case TWAI_STATE_RUNNING:    return "RUNNING";
+        case TWAI_STATE_BUS_OFF:    return "BUS_OFF";
+        case TWAI_STATE_RECOVERING: return "RECOVERING";
+        default:                    return "UNKNOWN";
+    }
+}
 
 void copyStringToBuffer(char* dest, size_t size, const String& value) {
     memset(dest, 0, size);
@@ -276,6 +289,98 @@ String buildBlockedDnsRequestsJson(uint32_t& totalBlockedCount, size_t& recentBl
 
     json += "]";
     return json;
+}
+
+void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_AP_START:
+            ESP_LOGI(
+                TAG,
+                "wifi AP started ssid=%s ip=%s channel=%d",
+                apCfg.ssid,
+                WiFi.softAPIP().toString().c_str(),
+                WiFi.channel()
+            );
+            break;
+        case ARDUINO_EVENT_WIFI_AP_STOP:
+            ESP_LOGW(TAG, "wifi AP stopped");
+            break;
+        case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+        case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+            ESP_LOGI(
+                TAG,
+                "wifi AP client event=%s clients=%u",
+                WiFi.eventName(event),
+                static_cast<unsigned>(WiFi.softAPgetStationNum())
+            );
+            break;
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            ESP_LOGI(
+                TAG,
+                "wifi STA connected ssid=%s channel=%d",
+                WiFi.SSID().c_str(),
+                WiFi.channel()
+            );
+            break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            ESP_LOGI(
+                TAG,
+                "wifi STA got ip=%s",
+                IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str()
+            );
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            ESP_LOGW(
+                TAG,
+                "wifi STA disconnected reason=%d",
+                static_cast<int>(info.wifi_sta_disconnected.reason)
+            );
+            break;
+        default:
+            ESP_LOGI(TAG, "wifi event=%s", WiFi.eventName(event));
+            break;
+    }
+}
+
+void logRuntimeHeartbeat() {
+    static uint32_t lastBeat = 0;
+    uint32_t now = millis();
+    if (lastBeat != 0 && now - lastBeat < DEBUG_HEARTBEAT_MS) return;
+    lastBeat = now;
+
+    twai_status_info_t twaiStatus = {};
+    esp_err_t twaiErr = twai_get_status_info(&twaiStatus);
+    wl_status_t staStatus = WiFi.status();
+    String staSSID = getConnectedUpstreamSSID();
+    String staIP = (staStatus == WL_CONNECTED) ? WiFi.localIP().toString() : String("-");
+
+    if (twaiErr != ESP_OK) {
+        ESP_LOGW(TAG, "twai status unavailable err=%s", esp_err_to_name(twaiErr));
+        return;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "beat rx=%lu mod=%lu err=%lu fsdTrig=%d fsdEn=%d hw=%u china=%d apClients=%u apIP=%s sta=%d staSSID=%s staIP=%s twai=%s rxErr=%lu txErr=%lu busErr=%lu rxMiss=%lu txFail=%lu",
+        static_cast<unsigned long>(cfg.rxCount),
+        static_cast<unsigned long>(cfg.modifiedCount),
+        static_cast<unsigned long>(cfg.errorCount),
+        static_cast<int>(cfg.fsdTriggered),
+        static_cast<int>(cfg.fsdEnable),
+        static_cast<unsigned>(cfg.hwMode),
+        static_cast<int>(cfg.chinaMode),
+        static_cast<unsigned>(WiFi.softAPgetStationNum()),
+        WiFi.softAPIP().toString().c_str(),
+        static_cast<int>(staStatus),
+        staSSID.isEmpty() ? "-" : staSSID.c_str(),
+        staIP.c_str(),
+        getTwaiStateName(twaiStatus.state),
+        static_cast<unsigned long>(twaiStatus.rx_error_counter),
+        static_cast<unsigned long>(twaiStatus.tx_error_counter),
+        static_cast<unsigned long>(twaiStatus.bus_error_count),
+        static_cast<unsigned long>(twaiStatus.rx_missed_count),
+        static_cast<unsigned long>(twaiStatus.tx_failed_count)
+    );
 }
 
 int performUpstreamScan(UpstreamScanResult* results, size_t maxResults) {
@@ -518,8 +623,10 @@ bool applyLocalAPConfig() {
     WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
     bool ok = WiFi.softAP(apCfg.ssid, apCfg.pass);
     if (ok) {
+        ESP_LOGI(TAG, "local AP ready ssid=%s ip=%s", apCfg.ssid, WiFi.softAPIP().toString().c_str());
         Serial.printf("WiFi AP: %s  IP: %s\n", apCfg.ssid, WiFi.softAPIP().toString().c_str());
     } else {
+        ESP_LOGE(TAG, "local AP start failed ssid=%s", apCfg.ssid);
         Serial.printf("WiFi AP restart failed for SSID: %s\n", apCfg.ssid);
     }
     return ok;
@@ -532,6 +639,7 @@ void startUpstreamConnect() {
     if (networkIndex < 0 || networkIndex >= wifiCfg.networkCount) {
         wifiCfg.activeIndex = -1;
         wifiCfg.lastAttemptMillis = millis();
+        ESP_LOGW(TAG, "no upstream hotspot available");
         Serial.println("No upstream hotspot available");
         return;
     }
@@ -540,6 +648,7 @@ void startUpstreamConnect() {
     wifiCfg.nextTryIndex = (networkIndex + 1) % wifiCfg.networkCount;
 
     const SavedUpstreamNetwork& network = wifiCfg.networks[networkIndex];
+    ESP_LOGI(TAG, "connecting upstream WiFi ssid=%s", network.ssid);
     Serial.printf("Connecting upstream WiFi: %s\n", network.ssid);
     WiFi.disconnect(false, false);
     if (network.pass[0] != '\0') {
@@ -556,6 +665,7 @@ void applyUpstreamWiFiConfig() {
         wifiCfg.activeIndex = -1;
         wifiCfg.nextTryIndex = 0;
         wifiCfg.lastAttemptMillis = 0;
+        ESP_LOGW(TAG, "upstream WiFi paused by thermal protection");
         Serial.println("Upstream WiFi paused by thermal protection");
         return;
     }
@@ -565,6 +675,7 @@ void applyUpstreamWiFiConfig() {
         wifiCfg.activeIndex = -1;
         wifiCfg.nextTryIndex = 0;
         wifiCfg.lastAttemptMillis = 0;
+        ESP_LOGI(TAG, "upstream WiFi disabled enabled=%d saved=%u", static_cast<int>(wifiCfg.enabled), static_cast<unsigned>(wifiCfg.networkCount));
         Serial.println("Upstream WiFi disabled");
         return;
     }
@@ -588,6 +699,7 @@ void serviceUpstreamWiFi() {
             WiFi.disconnect(false, true);
             wifiCfg.activeIndex = -1;
             wifiCfg.lastAttemptMillis = 0;
+            ESP_LOGW(TAG, "upstream WiFi disconnected due to thermal protection");
             Serial.println("Upstream WiFi disconnected due to thermal protection");
         }
         return;
@@ -628,6 +740,7 @@ void syncNATState() {
 
     ip_napt_enable(static_cast<u32_t>(AP_IP), shouldEnable ? 1 : 0);
     natEnabled = shouldEnable;
+    ESP_LOGI(TAG, "NAPT %s on %s", natEnabled ? "enabled" : "disabled", AP_IP.toString().c_str());
     Serial.printf("NAPT %s on %s\n", natEnabled ? "enabled" : "disabled", AP_IP.toString().c_str());
 }
 
@@ -1099,6 +1212,7 @@ void setupWebServer() {
     );
 
     server.begin();
+    ESP_LOGI(TAG, "web server started root=/ status=/api/status uiBytes=%u", static_cast<unsigned>(sizeof(INDEX_HTML) - 1));
     Serial.println("Web server started");
 }
 
@@ -1115,6 +1229,7 @@ void canTask(void* param) {
             activity = true;
             handleMessage(frame, canDriver);
         }
+        logRuntimeHeartbeat();
         // LED: on during activity, off when idle
         digitalWrite(PIN_LED, activity ? HIGH : LOW);
         // Yield to avoid starving watchdog
@@ -1137,30 +1252,46 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n=== FSD Controller ===");
+    ESP_LOGI(TAG, "boot start");
 
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_LED, LOW);
 
     loadConfig();
+    ESP_LOGI(
+        TAG,
+        "config loaded hw=%u profile=%u china=%d apSSID=%s upstreamEnabled=%d upstreamSaved=%u",
+        static_cast<unsigned>(cfg.hwMode),
+        static_cast<unsigned>(cfg.speedProfile),
+        static_cast<int>(cfg.chinaMode),
+        apCfg.ssid,
+        static_cast<int>(wifiCfg.enabled),
+        static_cast<unsigned>(wifiCfg.networkCount)
+    );
     Serial.printf("Config loaded: HW=%d, Profile=%d\n", cfg.hwMode, cfg.speedProfile);
 
     cfg.uptimeStart = millis();
 
     if (canDriver.init()) {
         cfg.canOK = true;
+        ESP_LOGI(TAG, "TWAI ready bitrate=500k txPin=%d rxPin=%d", static_cast<int>(TWAI_TX_PIN), static_cast<int>(TWAI_RX_PIN));
         Serial.println("ESP32 TWAI ready @ 500k");
     } else {
         cfg.canOK = false;
+        ESP_LOGE(TAG, "TWAI init failed txPin=%d rxPin=%d", static_cast<int>(TWAI_TX_PIN), static_cast<int>(TWAI_RX_PIN));
         Serial.println("CAN init failed!");
     }
 
+    WiFi.onEvent(logWiFiEvent);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
     WiFi.setSleep(false);
     WiFi.mode(WIFI_AP_STA);
+    ESP_LOGI(TAG, "wifi mode set to AP+STA");
     applyLocalAPConfig();
     requestUpstreamApply();
     dnsServer.begin();
+    ESP_LOGI(TAG, "dns server started port=53");
 
     setupWebServer();
     xTaskCreatePinnedToCore(dnsTask, "DNS", 4096, NULL, 1, NULL, 0);

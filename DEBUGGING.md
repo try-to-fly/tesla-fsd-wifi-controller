@@ -17,6 +17,7 @@ Waveshare ESP32-S3-RS485-CAN 等一体板的 USB 走 **USB-JTAG**（`/dev/cu.usb
 
 - ❌ `Serial.print/printf` → 走 UART0 → USB 上**看不到**
 - ✅ `ESP_LOGI(TAG, ...)` → 走 IDF console（UART0 + secondary USB-JTAG）→ **USB 能看到**
+- ✅ 这些日志是**实时串口输出**，**不会写入 NVS / SPIFFS / Flash**，不会把 ESP32 存储占满
 
 所以调试打印**必须**用 `ESP_LOGI`，否则你会以为代码没执行。
 
@@ -26,6 +27,26 @@ Waveshare ESP32-S3-RS485-CAN 等一体板的 USB 走 **USB-JTAG**（`/dev/cu.usb
 stty -F /dev/cu.usbmodem1101 115200 cs8 -cstopb -parenb raw -ixon
 timeout 15 cat /dev/cu.usbmodem1101
 ```
+
+如果你已经连上 ESP32 的 Wi-Fi，但 `9.9.9.9` 还是打不开，可以直接跑仓库里的调试脚本，一次性检查本机 IP、HTTP 接口和 USB 日志：
+
+```bash
+./scripts/debug_esp_portal.sh
+```
+
+常用参数：
+
+```bash
+./scripts/debug_esp_portal.sh --serial /dev/cu.usbmodem1101 --log-seconds 20
+./scripts/debug_esp_portal.sh --iface en0 --reset
+```
+
+脚本会把结果存到 `debug-logs/<时间戳>/`，重点看：
+
+- `api_status.body.json`
+- `root.headers.txt`
+- `route_to_9.9.9.9.txt`
+- `usb.log`
 
 ## 三、GPIO 引脚速查（不同板子不同）
 
