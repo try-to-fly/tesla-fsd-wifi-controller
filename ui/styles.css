@@ -684,6 +684,12 @@ select,
   letter-spacing:-.3px;
 }
 
+.metric-meta{
+  font-size:12px;
+  line-height:1.45;
+  color:var(--muted);
+}
+
 .green{color:var(--green)}
 .amber{color:var(--amber)}
 

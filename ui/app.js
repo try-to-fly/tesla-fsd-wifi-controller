@@ -4,7 +4,9 @@ let scanResults=[];
 let pendingScanResultsRender=false;
 let latestBlockedDnsRequests=[];
 let latestStatusUptime=0;
+let lastCanCounters=null;
 let activePickerId='';
+const COUNTER_WRAP=4294967296;
 const hwModeLabels={
   '0':'LEGACY',
   '1':'HW3',
@@ -40,6 +42,13 @@ function setWideStatusText(id,text,className){
   el.className=className+' status-text status-wide';
 }
 
+function setMetricValue(id,text,className){
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.textContent=text;
+  el.className='metric-value '+className;
+}
+
 function formatChipTemp(current,average){
   const currentValid=typeof current==='number'&&Number.isFinite(current);
   const avgValid=typeof average==='number'&&Number.isFinite(average);
@@ -55,6 +64,91 @@ function getSignalClass(rssi){
   if(rssi>=-67)return 'status-ok';
   if(rssi>=-75)return 'status-warn';
   return 'status-err';
+}
+
+function formatActivityAge(ageMs){
+  if(typeof ageMs!=='number'||!Number.isFinite(ageMs))return '--';
+  if(ageMs<1000)return '不到 1 秒';
+  if(ageMs<60000)return String(Math.max(1,Math.round(ageMs/1000)))+' 秒';
+  if(ageMs<3600000)return String(Math.round(ageMs/60000))+' 分钟';
+  return String(Math.round(ageMs/3600000))+' 小时';
+}
+
+function getCounterDelta(current,previous){
+  if(typeof current!=='number'||!Number.isFinite(current))return null;
+  if(typeof previous!=='number'||!Number.isFinite(previous))return null;
+  if(current>=previous)return current-previous;
+  return COUNTER_WRAP-previous+current;
+}
+
+function updateCounterCard(id,metaId,delta,isActive,ageMs,noun){
+  if(delta===null){
+    if(isActive){
+      setMetricValue(id,'变化中','status-ok');
+      setTextIfPresent(metaId,'已检测到'+noun+'，等待下一次速率采样');
+    }else if(typeof ageMs==='number'&&Number.isFinite(ageMs)){
+      setMetricValue(id,'空闲','status-no');
+      setTextIfPresent(metaId,'上次'+noun+' '+formatActivityAge(ageMs)+'前');
+    }else{
+      setMetricValue(id,'等待','status-no');
+      setTextIfPresent(metaId,'尚未检测到'+noun);
+    }
+    return;
+  }
+
+  if(delta>0){
+    setMetricValue(id,'+'+String(delta)+'/s','status-ok');
+    setTextIfPresent(metaId,'最近 1 秒持续'+noun);
+    return;
+  }
+
+  setMetricValue(id,'空闲','status-no');
+  if(typeof ageMs==='number'&&Number.isFinite(ageMs)){
+    setTextIfPresent(metaId,'上次'+noun+' '+formatActivityAge(ageMs)+'前');
+  }else{
+    setTextIfPresent(metaId,'尚未检测到'+noun);
+  }
+}
+
+function updateCanActivity(data){
+  const rx=typeof data.rx==='number'?data.rx:Number(data.rx||0);
+  const modified=typeof data.modified==='number'?data.modified:Number(data.modified||0);
+  const rxDelta=lastCanCounters?getCounterDelta(rx,lastCanCounters.rx):null;
+  const modifiedDelta=lastCanCounters?getCounterDelta(modified,lastCanCounters.modified):null;
+
+  updateCounterCard('sRX','sRXMeta',rxDelta,!!data.rxActive,data.rxAgeMs,'收包');
+  updateCounterCard('sModified','sModifiedMeta',modifiedDelta,!!data.modifiedActive,data.modifiedAgeMs,'改包');
+
+  lastCanCounters={rx,modified};
+}
+
+function updateCanStatus(data){
+  const canEl=document.getElementById('sCAN');
+  if(!canEl)return;
+
+  let text='异常';
+  let className='status-err';
+  let meta='TWAI 初始化失败';
+
+  if(data.canReady){
+    if(data.rxActive){
+      text='活跃';
+      className='status-ok';
+      meta='最近'+formatActivityAge(data.rxAgeMs)+'有收包';
+    }else if((typeof data.rx==='number'?data.rx:Number(data.rx||0))>0){
+      text='静默';
+      className='status-warn';
+      meta='驱动已就绪，但最近 2 秒没有新 CAN';
+    }else{
+      text='等待';
+      className='status-no';
+      meta='驱动已就绪，等待第一帧 CAN';
+    }
+  }
+
+  canEl.textContent=text;
+  canEl.className=className+' status-text';
+  setTextIfPresent('sCANMeta',meta);
 }
 
 function getHwModeLabel(value){
@@ -354,16 +448,13 @@ function renderBlockedDnsRequests(requests,currentUptime){
 
 function poll(){
   fetch('/api/status').then(r=>r.json()).then(d=>{
-    document.getElementById('sModified').textContent=d.modified;
-    document.getElementById('sRX').textContent=d.rx;
+    updateCanActivity(d);
     document.getElementById('sErrors').textContent=d.errors;
     let u=d.uptime;
     let h=Math.floor(u/3600),m=Math.floor((u%3600)/60),s=u%60;
     document.getElementById('sUptime').textContent=h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒';
 
-    let canEl=document.getElementById('sCAN');
-    canEl.textContent=d.canOK?'正常':'异常';
-    canEl.className=(d.canOK?'status-ok':'status-err')+' status-text';
+    updateCanStatus(d);
 
     let fsdEl=document.getElementById('sFSD');
     fsdEl.textContent=d.fsdTriggered?'是':'否';

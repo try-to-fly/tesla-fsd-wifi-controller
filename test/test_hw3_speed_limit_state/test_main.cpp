@@ -5,13 +5,21 @@
 
 #include "handlers.h"
 
+uint32_t fakeMillisValue = 0;
+
+uint32_t millis() {
+    return fakeMillisValue;
+}
+
 namespace {
 
 struct FakeCanDriver : public CanDriver {
     std::vector<CanFrame> sentFrames;
+    bool sendShouldSucceed = true;
 
     bool init() override { return true; }
     bool send(const CanFrame& frame) override {
+        if (!sendShouldSucceed) return false;
         sentFrames.push_back(frame);
         return true;
     }
@@ -68,9 +76,12 @@ void resetRuntimeConfig() {
     cfg.rxCount = 0;
     cfg.modifiedCount = 0;
     cfg.errorCount = 0;
+    cfg.lastRxMillis = 0;
+    cfg.lastModifiedMillis = 0;
     cfg.canOK = false;
     cfg.fsdTriggered = false;
     cfg.uptimeStart = 0;
+    fakeMillisValue = 0;
 }
 
 }  // namespace
@@ -148,11 +159,50 @@ void test_hw3_does_not_inject_offset_when_fsd_is_inactive() {
     TEST_ASSERT_TRUE(driver.sentFrames.empty());
 }
 
+void test_handle_message_tracks_last_rx_millis() {
+    FakeCanDriver driver;
+    CanFrame frame = makeHW3VisionFrame(20, 18);
+
+    fakeMillisValue = 1234;
+    handleMessage(frame, driver);
+
+    TEST_ASSERT_EQUAL_UINT32(1, cfg.rxCount);
+    TEST_ASSERT_EQUAL_UINT32(1234, cfg.lastRxMillis);
+}
+
+void test_hw3_send_success_tracks_last_modified_millis() {
+    FakeCanDriver driver;
+    CanFrame index0Frame = makeHW3Index0Frame(true, 12);
+
+    fakeMillisValue = 5678;
+    handleHW3(index0Frame, driver);
+
+    TEST_ASSERT_EQUAL_UINT32(1, cfg.modifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(5678, cfg.lastModifiedMillis);
+    TEST_ASSERT_EQUAL_UINT32(0, cfg.errorCount);
+}
+
+void test_hw3_send_failure_increments_error_without_updating_modified_millis() {
+    FakeCanDriver driver;
+    driver.sendShouldSucceed = false;
+    CanFrame index0Frame = makeHW3Index0Frame(true, 12);
+
+    fakeMillisValue = 91011;
+    handleHW3(index0Frame, driver);
+
+    TEST_ASSERT_EQUAL_UINT32(0, cfg.modifiedCount);
+    TEST_ASSERT_EQUAL_UINT32(1, cfg.errorCount);
+    TEST_ASSERT_EQUAL_UINT32(0, cfg.lastModifiedMillis);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_hw3_can_resolve_limit_before_760_arrives);
     RUN_TEST(test_hw3_reset_clears_cached_speed_limit_state);
     RUN_TEST(test_hw3_applies_smart_offset_when_fsd_is_active);
     RUN_TEST(test_hw3_does_not_inject_offset_when_fsd_is_inactive);
+    RUN_TEST(test_handle_message_tracks_last_rx_millis);
+    RUN_TEST(test_hw3_send_success_tracks_last_modified_millis);
+    RUN_TEST(test_hw3_send_failure_increments_error_without_updating_modified_millis);
     return UNITY_END();
 }

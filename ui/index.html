@@ -111,12 +111,14 @@
 
           <div class="metrics-grid">
             <article class="metric-panel primary">
-              <span class="metric-label">已修改</span>
-              <strong class="metric-value green" id="sModified">0</strong>
+              <span class="metric-label">改包变化</span>
+              <strong class="metric-value status-no" id="sModified">--</strong>
+              <span class="metric-meta" id="sModifiedMeta">等待速率采样</span>
             </article>
             <article class="metric-panel primary">
-              <span class="metric-label">已接收</span>
-              <strong class="metric-value" id="sRX">0</strong>
+              <span class="metric-label">收包变化</span>
+              <strong class="metric-value status-no" id="sRX">--</strong>
+              <span class="metric-meta" id="sRXMeta">等待速率采样</span>
             </article>
             <article class="metric-panel primary">
               <span class="metric-label">错误</span>
@@ -128,7 +130,8 @@
             </article>
             <article class="metric-panel">
               <span class="metric-label">CAN 总线</span>
-              <strong id="sCAN" class="status-no status-text">--</strong>
+              <strong id="sCAN" class="status-no status-text">等待</strong>
+              <span class="metric-meta" id="sCANMeta">等待第一帧 CAN</span>
             </article>
             <article class="metric-panel">
               <span class="metric-label">FSD 触发</span>

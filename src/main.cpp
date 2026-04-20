@@ -37,6 +37,7 @@ static constexpr uint32_t UPSTREAM_RETRY_THROTTLED_MS = 60000;
 static constexpr uint8_t MAX_UPSTREAM_NETWORKS = 10;
 static constexpr uint8_t MAX_SCAN_RESULTS = 12;
 static constexpr uint32_t THERMAL_SAMPLE_MS = 5000;
+static constexpr uint32_t CAN_ACTIVITY_WINDOW_MS = 2000;
 static constexpr float CHIP_TEMP_WARN_C = 65.0f;
 static constexpr float CHIP_TEMP_THROTTLE_C = 75.0f;
 static constexpr float CHIP_TEMP_PROTECT_C = 80.0f;
@@ -713,7 +714,8 @@ void saveConfig() {
 }
 
 String buildStatusJson() {
-    uint32_t uptime = (millis() - cfg.uptimeStart) / 1000;
+    uint32_t now = millis();
+    uint32_t uptime = (now - cfg.uptimeStart) / 1000;
     bool upstreamConnected = WiFi.status() == WL_CONNECTED;
     int32_t upstreamRSSI = upstreamConnected ? WiFi.RSSI() : 0;
     int32_t wifiChannel = WiFi.channel();
@@ -731,6 +733,14 @@ String buildStatusJson() {
     String natStatus = jsonEscape(String(getNATStatusText()));
     String thermalStatusText = jsonEscape(String(getThermalStatusText()));
     String savedNetworks = buildSavedUpstreamNetworksJson();
+    bool rxSeen = cfg.lastRxMillis != 0;
+    bool modifiedSeen = cfg.lastModifiedMillis != 0;
+    uint32_t rxAgeMs = rxSeen ? now - cfg.lastRxMillis : 0;
+    uint32_t modifiedAgeMs = modifiedSeen ? now - cfg.lastModifiedMillis : 0;
+    bool rxActive = rxSeen && rxAgeMs <= CAN_ACTIVITY_WINDOW_MS;
+    bool modifiedActive = modifiedSeen && modifiedAgeMs <= CAN_ACTIVITY_WINDOW_MS;
+    bool canReady = cfg.canOK;
+    bool canHealthy = canReady && rxActive;
     uint32_t dnsBlockedCount = 0;
     size_t dnsBlockedRecentCount = 0;
     String dnsBlockedRequests = buildBlockedDnsRequestsJson(dnsBlockedCount, dnsBlockedRecentCount);
@@ -746,6 +756,16 @@ String buildStatusJson() {
     json += String((unsigned)cfg.errorCount);
     json += ",\"uptime\":";
     json += String((unsigned)uptime);
+    json += ",\"rxActive\":";
+    json += (rxActive ? "true" : "false");
+    json += ",\"modifiedActive\":";
+    json += (modifiedActive ? "true" : "false");
+    json += ",\"rxAgeMs\":";
+    json += rxSeen ? String((unsigned)rxAgeMs) : "null";
+    json += ",\"modifiedAgeMs\":";
+    json += modifiedSeen ? String((unsigned)modifiedAgeMs) : "null";
+    json += ",\"canReady\":";
+    json += (canReady ? "true" : "false");
     json += ",\"chipTempC\":";
     json += std::isfinite(thermalStatus.currentC) ? String(thermalStatus.currentC, 1) : "null";
     json += ",\"chipTempAvgC\":";
@@ -755,7 +775,7 @@ String buildStatusJson() {
     json += "\",\"thermalProtect\":";
     json += (isThermalProtectionActive() ? "true" : "false");
     json += ",\"canOK\":";
-    json += (cfg.canOK ? "true" : "false");
+    json += (canHealthy ? "true" : "false");
     json += ",\"fsdTriggered\":";
     json += (cfg.fsdTriggered ? "true" : "false");
     json += ",\"fsdEnable\":";

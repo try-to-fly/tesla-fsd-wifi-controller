@@ -1,6 +1,11 @@
 #pragma once
 #include <cstdint>
 #include <algorithm>
+#if defined(ARDUINO)
+#include <Arduino.h>
+#else
+uint32_t millis();
+#endif
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
@@ -23,6 +28,8 @@ struct FSDConfig {
     volatile uint32_t rxCount       = 0;
     volatile uint32_t modifiedCount = 0;
     volatile uint32_t errorCount    = 0;
+    volatile uint32_t lastRxMillis  = 0;
+    volatile uint32_t lastModifiedMillis = 0;
     volatile bool     canOK         = false;
     volatile bool     fsdTriggered  = false;
     volatile uint32_t uptimeStart   = 0;
@@ -99,6 +106,20 @@ inline void updateHW3DetectedSpeedLimit() {
     }
 }
 
+inline void recordRxActivity() {
+    cfg.rxCount++;
+    cfg.lastRxMillis = millis();
+}
+
+inline void recordSendResult(bool sent) {
+    if (sent) {
+        cfg.modifiedCount++;
+        cfg.lastModifiedMillis = millis();
+    } else {
+        cfg.errorCount++;
+    }
+}
+
 // ── Handler: Legacy ──
 static void handleLegacy(CanFrame& frame, CanDriver& driver) {
     if (frame.id == 69 && cfg.profileModeAuto) {
@@ -114,13 +135,11 @@ static void handleLegacy(CanFrame& frame, CanDriver& driver) {
         if (index == 0 && cfg.fsdTriggered && cfg.fsdEnable) {
             setBit(frame, 46, true);
             setSpeedProfileV12V13(frame, cfg.speedProfile);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
         if (index == 1) {
             setBit(frame, 19, false);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
     }
 }
@@ -157,13 +176,11 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
         if (index == 0 && cfg.fsdTriggered && cfg.fsdEnable) {
             setBit(frame, 46, true);
             setSpeedProfileV12V13(frame, cfg.speedProfile);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
         if (index == 1) {
             setBit(frame, 19, false);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
         if (index == 2 && cfg.fsdTriggered && cfg.fsdEnable) {
             uint8_t originalOffsetKph = static_cast<uint8_t>(std::min<uint16_t>(hw3RawUserOffsetKph, 30));
@@ -176,8 +193,7 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
             frame.data[1] &= ~(0b00111111);
             frame.data[0] |= (speedOffset & 0x03) << 6;
             frame.data[1] |= (speedOffset >> 2);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
     }
 }
@@ -190,8 +206,7 @@ static void handleHW4(CanFrame& frame, CanDriver& driver) {
         for (int i = 0; i < 7; i++) sum += frame.data[i];
         sum += (921 & 0xFF) + (921 >> 8);
         frame.data[7] = sum & 0xFF;
-        if (driver.send(frame)) cfg.modifiedCount++;
-        else cfg.errorCount++;
+        recordSendResult(driver.send(frame));
         return;
     }
     if (frame.id == 1016 && cfg.profileModeAuto) {
@@ -211,27 +226,24 @@ static void handleHW4(CanFrame& frame, CanDriver& driver) {
             setBit(frame, 46, true);
             setBit(frame, 60, true);
             if (cfg.emergencyDetection) setBit(frame, 59, true);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
         if (index == 1) {
             setBit(frame, 19, false);
             setBit(frame, 47, true);
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
         if (index == 2) {
             frame.data[7] &= ~(0x07 << 4);
             frame.data[7] |= (cfg.speedProfile & 0x07) << 4;
-            if (driver.send(frame)) cfg.modifiedCount++;
-            else cfg.errorCount++;
+            recordSendResult(driver.send(frame));
         }
     }
 }
 
 // ── Unified dispatch ──
 static void handleMessage(CanFrame& frame, CanDriver& driver) {
-    cfg.rxCount++;
+    recordRxActivity();
     if (!isFilteredId(frame.id)) return;
     switch (cfg.hwMode) {
         case 0: handleLegacy(frame, driver); break;
