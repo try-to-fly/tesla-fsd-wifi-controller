@@ -313,6 +313,57 @@ h1{
   border:1px solid rgba(125,211,252,.12);
 }
 
+.speed-readonly-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+
+.speed-info-tile{
+  min-width:0;
+  padding:12px 14px;
+  border-radius:16px;
+  background:rgba(19,33,58,.74);
+  border:1px solid rgba(125,211,252,.1);
+}
+
+.speed-info-wide{
+  grid-column:1 / -1;
+}
+
+.speed-info-label{
+  display:block;
+  font-size:11px;
+  line-height:1.4;
+  color:var(--muted);
+}
+
+.speed-info-value{
+  display:block;
+  margin-top:6px;
+  font-size:22px;
+  line-height:1.2;
+  font-weight:800;
+  color:var(--text);
+}
+
+.speed-info-meta{
+  font-size:14px;
+  line-height:1.5;
+  font-weight:700;
+  color:var(--muted-strong);
+}
+
+@media (max-width:720px){
+  .speed-readonly-grid{
+    grid-template-columns:1fr;
+  }
+
+  .speed-info-wide{
+    grid-column:auto;
+  }
+}
+
 .speed-card .row{
   padding:10px 0;
 }

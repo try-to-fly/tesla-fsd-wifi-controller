@@ -4,6 +4,7 @@
 #include "can_frame_types.h"
 #include "drivers/can_driver.h"
 #include "can_helpers.h"
+#include "speed_limit_policy.h"
 
 // ── Runtime-configurable state (shared with web server) ──
 struct FSDConfig {
@@ -11,11 +12,12 @@ struct FSDConfig {
     volatile uint8_t  hwMode              = 1;       // 0=LEGACY, 1=HW3, 2=HW4  (默认 HW3)
     volatile uint8_t  speedProfile        = 1;       // 0-4
     volatile bool     profileModeAuto     = true;    // true=auto from stalk, false=manual
-    volatile bool     speedOffsetEnable   = false;   // HW3 only, inject configured offset
-    volatile uint8_t  speedOffsetPercent  = 0;       // 0-50 (% over limit)
     volatile bool     isaChimeSuppress    = false;
     volatile bool     emergencyDetection  = true;
     volatile bool     chinaMode          = true;   // CN firmware: bypass isFSDSelectedInUI check  (默认开启)
+    volatile uint16_t detectedSpeedLimitKph = 0;    // resolved limit from vision/fused/map
+    volatile uint8_t  detectedSpeedSource   = 0;    // SpeedLimitSource
+    volatile uint8_t  appliedSpeedOffsetKph = 0;    // actual injected offset in km/h
 
     // Stats
     volatile uint32_t rxCount       = 0;
@@ -30,8 +32,13 @@ static FSDConfig cfg;
 
 // ── Filter IDs per HW mode ──
 static constexpr uint32_t LEGACY_IDS[] = {69, 1006};
-static constexpr uint32_t HW3_IDS[]    = {1016, 1021};
+static constexpr uint32_t HW3_IDS[]    = {760, 921, 1016, 1021};
 static constexpr uint32_t HW4_IDS[]    = {921, 1016, 1021};
+
+static uint8_t  hw3RawUserOffsetKph    = 0;
+static uint16_t hw3VisionSpeedLimitKph = 0;
+static uint16_t hw3FusedSpeedLimitKph  = 0;
+static uint16_t hw3MapSpeedLimitKph    = 0;
 
 inline const uint32_t* getFilterIds() {
     switch (cfg.hwMode) {
@@ -43,7 +50,7 @@ inline const uint32_t* getFilterIds() {
 inline uint8_t getFilterIdCount() {
     switch (cfg.hwMode) {
         case 0: return 2;
-        case 1: return 2;
+        case 1: return 4;
         default: return 3;
     }
 }
@@ -55,6 +62,41 @@ inline bool isFilteredId(uint32_t id) {
         if (ids[i] == id) return true;
     }
     return false;
+}
+
+inline uint8_t decodeRawUserOffsetKph(const CanFrame& frame) {
+    int raw = static_cast<int>((frame.data[3] >> 1) & 0x3F) - 30;
+    return static_cast<uint8_t>(std::max(raw, 0));
+}
+
+inline void clearHW3SpeedLimitTelemetry() {
+    cfg.detectedSpeedLimitKph = 0;
+    cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::None);
+    cfg.appliedSpeedOffsetKph = 0;
+}
+
+inline void resetHW3SpeedLimitState() {
+    hw3RawUserOffsetKph = 0;
+    hw3VisionSpeedLimitKph = 0;
+    hw3FusedSpeedLimitKph = 0;
+    hw3MapSpeedLimitKph = 0;
+    clearHW3SpeedLimitTelemetry();
+}
+
+inline void updateHW3DetectedSpeedLimit() {
+    if (hw3FusedSpeedLimitKph > 0) {
+        cfg.detectedSpeedLimitKph = hw3FusedSpeedLimitKph;
+        cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::Fused);
+    } else if (hw3VisionSpeedLimitKph > 0) {
+        cfg.detectedSpeedLimitKph = hw3VisionSpeedLimitKph;
+        cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::Vision);
+    } else if (hw3MapSpeedLimitKph > 0) {
+        cfg.detectedSpeedLimitKph = hw3MapSpeedLimitKph;
+        cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::Map);
+    } else {
+        cfg.detectedSpeedLimitKph = 0;
+        cfg.detectedSpeedSource = static_cast<uint8_t>(SpeedLimitSource::None);
+    }
 }
 
 // ── Handler: Legacy ──
@@ -85,6 +127,17 @@ static void handleLegacy(CanFrame& frame, CanDriver& driver) {
 
 // ── Handler: HW3 ──
 static void handleHW3(CanFrame& frame, CanDriver& driver) {
+    if (frame.id == 760) {
+        hw3MapSpeedLimitKph = decodeMapSpeedLimitKph(frame.data[6] & 0x1F);
+        updateHW3DetectedSpeedLimit();
+        return;
+    }
+    if (frame.id == 921) {
+        hw3FusedSpeedLimitKph = decodeFiveStepSpeedLimitKph(frame.data[1] & 0x1F);
+        hw3VisionSpeedLimitKph = decodeFiveStepSpeedLimitKph(frame.data[2] & 0x1F);
+        updateHW3DetectedSpeedLimit();
+        return;
+    }
     if (frame.id == 1016 && cfg.profileModeAuto) {
         uint8_t fd = (frame.data[5] & 0b11100000) >> 5;
         switch (fd) {
@@ -96,7 +149,11 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
     }
     if (frame.id == 1021) {
         auto index = readMuxID(frame);
-        if (index == 0) cfg.fsdTriggered = cfg.chinaMode || isFSDSelectedInUI(frame);
+        if (index == 0) {
+            cfg.fsdTriggered = cfg.chinaMode || isFSDSelectedInUI(frame);
+            hw3RawUserOffsetKph = decodeRawUserOffsetKph(frame);
+            if (!cfg.fsdTriggered || !cfg.fsdEnable) cfg.appliedSpeedOffsetKph = 0;
+        }
         if (index == 0 && cfg.fsdTriggered && cfg.fsdEnable) {
             setBit(frame, 46, true);
             setSpeedProfileV12V13(frame, cfg.speedProfile);
@@ -109,9 +166,12 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
             else cfg.errorCount++;
         }
         if (index == 2 && cfg.fsdTriggered && cfg.fsdEnable) {
-            int speedOffset = cfg.speedOffsetEnable
-                ? static_cast<int>(cfg.speedOffsetPercent) * 4
-                : std::max(std::min(((int)((frame.data[3] >> 1) & 0x3F) - 30) * 5, 100), 0);
+            uint8_t originalOffsetKph = static_cast<uint8_t>(std::min<uint16_t>(hw3RawUserOffsetKph, 30));
+            uint8_t appliedOffsetKph = cfg.detectedSpeedLimitKph > 0
+                ? computeSmartOffsetKph(cfg.detectedSpeedLimitKph)
+                : std::min<uint8_t>(originalOffsetKph, HW3_AUTO_OFFSET_FALLBACK_KPH);
+            int speedOffset = encodeOffsetFieldFromKph(appliedOffsetKph);
+            cfg.appliedSpeedOffsetKph = appliedOffsetKph;
             frame.data[0] &= ~(0b11000000);
             frame.data[1] &= ~(0b00111111);
             frame.data[0] |= (speedOffset & 0x03) << 6;

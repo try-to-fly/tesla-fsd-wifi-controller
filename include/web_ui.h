@@ -329,6 +329,57 @@ h1{
   border:1px solid rgba(125,211,252,.12);
 }
 
+.speed-readonly-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+
+.speed-info-tile{
+  min-width:0;
+  padding:12px 14px;
+  border-radius:16px;
+  background:rgba(19,33,58,.74);
+  border:1px solid rgba(125,211,252,.1);
+}
+
+.speed-info-wide{
+  grid-column:1 / -1;
+}
+
+.speed-info-label{
+  display:block;
+  font-size:11px;
+  line-height:1.4;
+  color:var(--muted);
+}
+
+.speed-info-value{
+  display:block;
+  margin-top:6px;
+  font-size:22px;
+  line-height:1.2;
+  font-weight:800;
+  color:var(--text);
+}
+
+.speed-info-meta{
+  font-size:14px;
+  line-height:1.5;
+  font-weight:700;
+  color:var(--muted-strong);
+}
+
+@media (max-width:720px){
+  .speed-readonly-grid{
+    grid-template-columns:1fr;
+  }
+
+  .speed-info-wide{
+    grid-column:auto;
+  }
+}
+
 .speed-card .row{
   padding:10px 0;
 }
@@ -1370,148 +1421,37 @@ select,
           <div class="section-tag">首屏控制</div>
           <div class="speed-card-head">
             <div>
-              <h2>HW3 速度偏移</h2>
+              <h2>HW3 智能限速</h2>
             </div>
             <div class="hardware-pill" id="hwModeBadge">硬件 --</div>
           </div>
 
           <div class="speed-hero">
             <div class="speed-quick">
-              <div class="speed-quick-label">当前偏移</div>
-              <div class="speed-quick-value" id="speedOffsetDisplay">+0%</div>
+              <div class="speed-quick-label">当前增量</div>
+              <div class="speed-quick-value" id="speedOffsetDisplay">+0 km/h</div>
               <div class="speed-quick-note" id="speedOffsetState">读取中</div>
             </div>
           </div>
 
           <div class="hero-controls">
-            <div class="row row-compact">
-              <span class="row-label">启用速度偏移</span>
-              <label class="toggle"
-                ><input
-                  type="checkbox"
-                  id="speedOffsetEnable"
-                  onchange="setVal('speedOffsetEnable',this.checked?1:0)" /><span
-                  class="slider"
-                ></span
-              ></label>
+            <div class="speed-readonly-grid">
+              <article class="speed-info-tile">
+                <span class="speed-info-label">识别限速</span>
+                <strong class="speed-info-value" id="detectedSpeedLimitDisplay">--</strong>
+              </article>
+              <article class="speed-info-tile">
+                <span class="speed-info-label">信号来源</span>
+                <strong class="speed-info-value speed-info-meta" id="detectedSpeedSourceDisplay">--</strong>
+              </article>
+              <article class="speed-info-tile speed-info-wide">
+                <span class="speed-info-label">自动策略</span>
+                <strong class="speed-info-value speed-info-meta" id="speedPolicySummary">低速更积极，高速 100+ 不超过 10%</strong>
+              </article>
             </div>
-            <div class="field hero-field">
-              <label class="field-label" for="speedOffsetPct">偏移百分比</label>
-              <div class="speed-offset-panel">
-                <select
-                  id="speedOffsetPct"
-                  class="picker-native"
-                  onchange="setVal('speedOffsetPct',this.value)"
-                >
-                  <option value="0" selected>+0%</option>
-                  <option value="5">+5%</option>
-                  <option value="10">+10%</option>
-                  <option value="15">+15%</option>
-                  <option value="20">+20%</option>
-                  <option value="25">+25%</option>
-                  <option value="30">+30%</option>
-                  <option value="35">+35%</option>
-                  <option value="40">+40%</option>
-                  <option value="45">+45%</option>
-                  <option value="50">+50%</option>
-                </select>
-                <div
-                  class="offset-grid"
-                  id="speedOffsetOptions"
-                  role="group"
-                  aria-label="速度偏移百分比"
-                >
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="0"
-                    onclick="chooseSpeedOffsetPreset('0')"
-                  >
-                    +0%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="5"
-                    onclick="chooseSpeedOffsetPreset('5')"
-                  >
-                    +5%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="10"
-                    onclick="chooseSpeedOffsetPreset('10')"
-                  >
-                    +10%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="15"
-                    onclick="chooseSpeedOffsetPreset('15')"
-                  >
-                    +15%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="20"
-                    onclick="chooseSpeedOffsetPreset('20')"
-                  >
-                    +20%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="25"
-                    onclick="chooseSpeedOffsetPreset('25')"
-                  >
-                    +25%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="30"
-                    onclick="chooseSpeedOffsetPreset('30')"
-                  >
-                    +30%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="35"
-                    onclick="chooseSpeedOffsetPreset('35')"
-                  >
-                    +35%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="40"
-                    onclick="chooseSpeedOffsetPreset('40')"
-                  >
-                    +40%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="45"
-                    onclick="chooseSpeedOffsetPreset('45')"
-                  >
-                    +45%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="50"
-                    onclick="chooseSpeedOffsetPreset('50')"
-                  >
-                    +50%
-                  </button>
-                </div>
-              </div>
-            </div>
+            <p class="hint hero-hint">
+              HW3 下在 FSD 激活后自动生效，无需手动设置。当前策略：30/40 限速按 20%，50/60 按 18%，70/80 按 15%，90 按 12%，100 及以上按 10% 自动上浮。
+            </p>
           </div>
         </section>
 
@@ -2133,55 +2073,65 @@ function getHwModeLabel(value){
   return hwModeLabels[String(value)]||'--';
 }
 
+function getSpeedSourceLabel(value){
+  switch(String(value)){
+    case '1': return '视觉限速';
+    case '2': return '融合限速';
+    case '3': return '地图限速';
+    default: return '';
+  }
+}
+
 function syncDashboardSummary(data){
   const hwSelect=document.getElementById('hwMode');
-  const offsetSelect=document.getElementById('speedOffsetPct');
-  const offsetToggle=document.getElementById('speedOffsetEnable');
   const fsdToggle=document.getElementById('fsdEnable');
   const dnsToggle=document.getElementById('dnsWhitelistEnable');
   const currentUpstream=document.getElementById('sCurrentUpstream');
   const upstreamStatus=document.getElementById('sUpstream');
   const hwLabel=data?getHwModeLabel(data.hwMode):getSelectDisplayText(hwSelect);
-  const offsetLabel=data?('+'+String(Number(data.speedOffsetPct||0))+'%'):getSelectDisplayText(offsetSelect);
   const isHw3=data?String(data.hwMode)==='1':hwLabel==='HW3';
-  const offsetEnabled=data?!!data.speedOffsetEnable:!!(offsetToggle&&offsetToggle.checked);
   const fsdEnabled=data?!!data.fsdEnable:!!(fsdToggle&&fsdToggle.checked);
+  const fsdTriggered=data?!!data.fsdTriggered:false;
   const dnsEnabled=data?!!data.dnsWhitelistEnable:!!(dnsToggle&&dnsToggle.checked);
   const dnsCount=data?Number(data.dnsWhitelistCount||0):getDnsRulesFromTextarea('dnsAllowlist').length;
   const currentUpstreamText=(data?(data.connectedUpstreamSSID||data.upstreamSSID||''):((currentUpstream&&currentUpstream.textContent)||'')).trim();
   const upstreamStatusText=(data?(data.upstreamStatus||'--'):((upstreamStatus&&upstreamStatus.textContent)||'--')).trim();
-  let offsetState='已关闭';
-  if(!isHw3)offsetState='当前为 '+hwLabel+'，仅 HW3 可用';
-  else if(offsetEnabled)offsetState='已启用，按当前限速上浮';
+  const detectedLimitKph=data?Number(data.detectedSpeedLimitKph||0):0;
+  const detectedSpeedSource=data?getSpeedSourceLabel(data.detectedSpeedSource):'';
+  const appliedOffsetKph=data&&isHw3&&fsdEnabled&&fsdTriggered?Number(data.appliedSpeedOffsetKph||0):0;
+  const appliedOffsetLabel='+'+String(appliedOffsetKph)+' km/h';
+  const sourceLabel=detectedSpeedSource||'--';
+  let offsetState='读取中';
+  let policySummary='30/40 按 20%，50/60 按 18%，70/80 按 15%，90 按 12%，100+ 按 10%';
+  let limitLabel='--';
+
+  if(data&&detectedLimitKph>0){
+    limitLabel=String(detectedLimitKph)+' km/h';
+  }
+
+  if(!isHw3){
+    offsetState='当前为 '+hwLabel+'，自动限速仅在 HW3 生效';
+    policySummary='当前硬件不使用这套 HW3 自动限速策略';
+  }else if(data&&!fsdEnabled){
+    offsetState='FSD 已关闭，当前仅监测限速';
+  }else if(data&&!fsdTriggered){
+    offsetState=detectedLimitKph>0?'未触发 FSD，当前仅监测限速':'未触发 FSD，等待车机进入 FSD';
+  }else if(data&&detectedLimitKph>0){
+    offsetState='按识别限速自动上浮';
+  }else if(data){
+    offsetState='未识别到有效限速，回退到温和默认增量';
+    policySummary+=' · 识别丢失时回退到 +'+String(10)+' km/h 内';
+  }
 
   setTextIfPresent('hwModeBadge','硬件 '+hwLabel);
-  setTextIfPresent('speedOffsetDisplay',offsetLabel);
+  setTextIfPresent('speedOffsetDisplay',appliedOffsetLabel);
   setTextIfPresent('speedOffsetState',offsetState);
+  setTextIfPresent('detectedSpeedLimitDisplay',limitLabel);
+  setTextIfPresent('detectedSpeedSourceDisplay',sourceLabel);
+  setTextIfPresent('speedPolicySummary',policySummary);
   setTextIfPresent('toolbarFsdMeta','硬件 '+hwLabel+' · '+(fsdEnabled?'已启用':'已关闭'));
   setTextIfPresent('toolbarDnsMeta',(dnsEnabled?'已启用':'未启用')+' · 白名单 '+dnsCount+' 条');
   setTextIfPresent('toolbarNetworkMeta',currentUpstreamText&&currentUpstreamText!=='--'?currentUpstreamText:'上游 '+(upstreamStatusText||'--'));
-}
-
-function syncSpeedOffsetOptions(){
-  const select=document.getElementById('speedOffsetPct');
-  const wrap=document.getElementById('speedOffsetOptions');
-  if(!select||!wrap)return;
-  const buttons=wrap.querySelectorAll('.offset-chip');
-  buttons.forEach(btn=>{
-    const isActive=btn.dataset.value===String(select.value);
-    btn.classList.toggle('active',isActive);
-    btn.disabled=!!select.disabled;
-    btn.setAttribute('aria-pressed',isActive?'true':'false');
-  });
-}
-
-function chooseSpeedOffsetPreset(value){
-  const select=document.getElementById('speedOffsetPct');
-  if(!select||select.disabled)return;
-  select.value=String(value);
-  select.dispatchEvent(new Event('change',{bubbles:true}));
-  syncSpeedOffsetOptions();
-  syncDashboardSummary();
 }
 
 function openDialog(id){
@@ -2440,16 +2390,10 @@ function poll(){
     document.getElementById('hwMode').value=d.hwMode;
     document.getElementById('speedProfile').value=d.speedProfile;
     document.getElementById('profileMode').value=d.profileMode?'1':'0';
-    document.getElementById('speedOffsetEnable').checked=!!d.speedOffsetEnable;
-    document.getElementById('speedOffsetPct').value=String(d.speedOffsetPct||0);
     document.getElementById('isaChime').checked=!!d.isaChime;
     document.getElementById('emergencyDet').checked=!!d.emergencyDet;
     document.getElementById('chinaMode').checked=!!d.chinaMode;
 
-    const isHw3=String(d.hwMode)==='1';
-    document.getElementById('speedOffsetEnable').disabled=!isHw3;
-    document.getElementById('speedOffsetPct').disabled=!isHw3||!d.speedOffsetEnable;
-    syncSpeedOffsetOptions();
     syncPickerButton('hwMode');
     syncPickerButton('speedProfile');
     syncPickerButton('profileMode');
@@ -2483,17 +2427,6 @@ function poll(){
 
 function setVal(key,val){
   fetch('/api/set?'+key+'='+val).catch(()=>{});
-  if(key==='speedOffsetEnable'||key==='hwMode'){
-    const select=document.getElementById('speedOffsetPct');
-    const hwSelect=document.getElementById('hwMode');
-    const offsetToggle=document.getElementById('speedOffsetEnable');
-    if(select&&hwSelect){
-      const nextHwMode=key==='hwMode'?String(val):String(hwSelect.value);
-      const nextOffsetEnabled=key==='speedOffsetEnable'?!!Number(val):!!(offsetToggle&&offsetToggle.checked);
-      select.disabled=nextHwMode!=='1'||!nextOffsetEnabled;
-      syncSpeedOffsetOptions();
-    }
-  }
   syncDashboardSummary();
 }
 
@@ -2665,7 +2598,6 @@ function deleteSavedUpstream(ssid){
 }
 
 ['hwMode','speedProfile','profileMode','scanResults'].forEach(syncPickerButton);
-syncSpeedOffsetOptions();
 syncDashboardSummary();
 
 document.addEventListener('keydown',evt=>{

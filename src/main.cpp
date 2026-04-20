@@ -640,8 +640,6 @@ void loadConfig() {
     cfg.hwMode             = prefs.getUChar("hwMode", 1);   // 默认 HW3
     cfg.speedProfile       = prefs.getUChar("spPro", 1);
     cfg.profileModeAuto    = prefs.getBool("proAuto", true);
-    cfg.speedOffsetEnable  = prefs.getBool("spOffEn", false);
-    cfg.speedOffsetPercent = prefs.getUChar("spOffPct", 0);
     cfg.isaChimeSuppress   = prefs.getBool("isaChm", false);
     cfg.emergencyDetection = prefs.getBool("emDet", true);
     cfg.chinaMode          = prefs.getBool("cnMode", true);  // 默认开启 chinaMode
@@ -670,7 +668,6 @@ void loadConfig() {
     // Clamp values
     if (cfg.hwMode > 2)       cfg.hwMode = 2;
     if (cfg.speedProfile > 4) cfg.speedProfile = 1;
-    if (cfg.speedOffsetPercent > 50) cfg.speedOffsetPercent = 50;
     if (apCfg.ssid[0] == '\0') {
         copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), String(DEFAULT_AP_SSID));
     }
@@ -686,8 +683,9 @@ void saveConfig() {
     prefs.putUChar("hwMode", cfg.hwMode);
     prefs.putUChar("spPro",  cfg.speedProfile);
     prefs.putBool("proAuto", cfg.profileModeAuto);
-    prefs.putBool("spOffEn", cfg.speedOffsetEnable);
-    prefs.putUChar("spOffPct", cfg.speedOffsetPercent);
+    prefs.remove("spOffEn");
+    prefs.remove("spOffCap");
+    prefs.remove("spOffPct");
     prefs.putBool("isaChm",  cfg.isaChimeSuppress);
     prefs.putBool("emDet",   cfg.emergencyDetection);
     prefs.putBool("cnMode",  cfg.chinaMode);
@@ -768,10 +766,12 @@ String buildStatusJson() {
     json += String((int)cfg.speedProfile);
     json += ",\"profileMode\":";
     json += String((int)cfg.profileModeAuto);
-    json += ",\"speedOffsetEnable\":";
-    json += String((int)cfg.speedOffsetEnable);
-    json += ",\"speedOffsetPct\":";
-    json += String((int)cfg.speedOffsetPercent);
+    json += ",\"detectedSpeedLimitKph\":";
+    json += String((unsigned)cfg.detectedSpeedLimitKph);
+    json += ",\"detectedSpeedSource\":";
+    json += String((int)cfg.detectedSpeedSource);
+    json += ",\"appliedSpeedOffsetKph\":";
+    json += String((int)cfg.appliedSpeedOffsetKph);
     json += ",\"isaChime\":";
     json += String((int)cfg.isaChimeSuppress);
     json += ",\"emergencyDet\":";
@@ -947,11 +947,18 @@ void setupWebServer() {
 
         if (req->hasParam("fsdEnable")) {
             cfg.fsdEnable = req->getParam("fsdEnable")->value().toInt() != 0;
+            if (!cfg.fsdEnable) cfg.appliedSpeedOffsetKph = 0;
             changed = true;
         }
         if (req->hasParam("hwMode")) {
             uint8_t v = req->getParam("hwMode")->value().toInt();
-            if (v <= 2) { cfg.hwMode = v; changed = true; }
+            if (v <= 2) {
+                if (v != cfg.hwMode && (v == 1 || cfg.hwMode == 1)) {
+                    resetHW3SpeedLimitState();
+                }
+                cfg.hwMode = v;
+                changed = true;
+            }
         }
         if (req->hasParam("speedProfile")) {
             uint8_t v = req->getParam("speedProfile")->value().toInt();
@@ -959,17 +966,6 @@ void setupWebServer() {
         }
         if (req->hasParam("profileMode")) {
             cfg.profileModeAuto = req->getParam("profileMode")->value().toInt() != 0;
-            changed = true;
-        }
-        if (req->hasParam("speedOffsetEnable")) {
-            cfg.speedOffsetEnable = req->getParam("speedOffsetEnable")->value().toInt() != 0;
-            changed = true;
-        }
-        if (req->hasParam("speedOffsetPct")) {
-            int value = req->getParam("speedOffsetPct")->value().toInt();
-            if (value < 0) value = 0;
-            if (value > 50) value = 50;
-            cfg.speedOffsetPercent = static_cast<uint8_t>(value);
             changed = true;
         }
         if (req->hasParam("isaChime")) {

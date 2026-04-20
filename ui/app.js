@@ -61,55 +61,65 @@ function getHwModeLabel(value){
   return hwModeLabels[String(value)]||'--';
 }
 
+function getSpeedSourceLabel(value){
+  switch(String(value)){
+    case '1': return '视觉限速';
+    case '2': return '融合限速';
+    case '3': return '地图限速';
+    default: return '';
+  }
+}
+
 function syncDashboardSummary(data){
   const hwSelect=document.getElementById('hwMode');
-  const offsetSelect=document.getElementById('speedOffsetPct');
-  const offsetToggle=document.getElementById('speedOffsetEnable');
   const fsdToggle=document.getElementById('fsdEnable');
   const dnsToggle=document.getElementById('dnsWhitelistEnable');
   const currentUpstream=document.getElementById('sCurrentUpstream');
   const upstreamStatus=document.getElementById('sUpstream');
   const hwLabel=data?getHwModeLabel(data.hwMode):getSelectDisplayText(hwSelect);
-  const offsetLabel=data?('+'+String(Number(data.speedOffsetPct||0))+'%'):getSelectDisplayText(offsetSelect);
   const isHw3=data?String(data.hwMode)==='1':hwLabel==='HW3';
-  const offsetEnabled=data?!!data.speedOffsetEnable:!!(offsetToggle&&offsetToggle.checked);
   const fsdEnabled=data?!!data.fsdEnable:!!(fsdToggle&&fsdToggle.checked);
+  const fsdTriggered=data?!!data.fsdTriggered:false;
   const dnsEnabled=data?!!data.dnsWhitelistEnable:!!(dnsToggle&&dnsToggle.checked);
   const dnsCount=data?Number(data.dnsWhitelistCount||0):getDnsRulesFromTextarea('dnsAllowlist').length;
   const currentUpstreamText=(data?(data.connectedUpstreamSSID||data.upstreamSSID||''):((currentUpstream&&currentUpstream.textContent)||'')).trim();
   const upstreamStatusText=(data?(data.upstreamStatus||'--'):((upstreamStatus&&upstreamStatus.textContent)||'--')).trim();
-  let offsetState='已关闭';
-  if(!isHw3)offsetState='当前为 '+hwLabel+'，仅 HW3 可用';
-  else if(offsetEnabled)offsetState='已启用，按当前限速上浮';
+  const detectedLimitKph=data?Number(data.detectedSpeedLimitKph||0):0;
+  const detectedSpeedSource=data?getSpeedSourceLabel(data.detectedSpeedSource):'';
+  const appliedOffsetKph=data&&isHw3&&fsdEnabled&&fsdTriggered?Number(data.appliedSpeedOffsetKph||0):0;
+  const appliedOffsetLabel='+'+String(appliedOffsetKph)+' km/h';
+  const sourceLabel=detectedSpeedSource||'--';
+  let offsetState='读取中';
+  let policySummary='30/40 按 20%，50/60 按 18%，70/80 按 15%，90 按 12%，100+ 按 10%';
+  let limitLabel='--';
+
+  if(data&&detectedLimitKph>0){
+    limitLabel=String(detectedLimitKph)+' km/h';
+  }
+
+  if(!isHw3){
+    offsetState='当前为 '+hwLabel+'，自动限速仅在 HW3 生效';
+    policySummary='当前硬件不使用这套 HW3 自动限速策略';
+  }else if(data&&!fsdEnabled){
+    offsetState='FSD 已关闭，当前仅监测限速';
+  }else if(data&&!fsdTriggered){
+    offsetState=detectedLimitKph>0?'未触发 FSD，当前仅监测限速':'未触发 FSD，等待车机进入 FSD';
+  }else if(data&&detectedLimitKph>0){
+    offsetState='按识别限速自动上浮';
+  }else if(data){
+    offsetState='未识别到有效限速，回退到温和默认增量';
+    policySummary+=' · 识别丢失时回退到 +'+String(10)+' km/h 内';
+  }
 
   setTextIfPresent('hwModeBadge','硬件 '+hwLabel);
-  setTextIfPresent('speedOffsetDisplay',offsetLabel);
+  setTextIfPresent('speedOffsetDisplay',appliedOffsetLabel);
   setTextIfPresent('speedOffsetState',offsetState);
+  setTextIfPresent('detectedSpeedLimitDisplay',limitLabel);
+  setTextIfPresent('detectedSpeedSourceDisplay',sourceLabel);
+  setTextIfPresent('speedPolicySummary',policySummary);
   setTextIfPresent('toolbarFsdMeta','硬件 '+hwLabel+' · '+(fsdEnabled?'已启用':'已关闭'));
   setTextIfPresent('toolbarDnsMeta',(dnsEnabled?'已启用':'未启用')+' · 白名单 '+dnsCount+' 条');
   setTextIfPresent('toolbarNetworkMeta',currentUpstreamText&&currentUpstreamText!=='--'?currentUpstreamText:'上游 '+(upstreamStatusText||'--'));
-}
-
-function syncSpeedOffsetOptions(){
-  const select=document.getElementById('speedOffsetPct');
-  const wrap=document.getElementById('speedOffsetOptions');
-  if(!select||!wrap)return;
-  const buttons=wrap.querySelectorAll('.offset-chip');
-  buttons.forEach(btn=>{
-    const isActive=btn.dataset.value===String(select.value);
-    btn.classList.toggle('active',isActive);
-    btn.disabled=!!select.disabled;
-    btn.setAttribute('aria-pressed',isActive?'true':'false');
-  });
-}
-
-function chooseSpeedOffsetPreset(value){
-  const select=document.getElementById('speedOffsetPct');
-  if(!select||select.disabled)return;
-  select.value=String(value);
-  select.dispatchEvent(new Event('change',{bubbles:true}));
-  syncSpeedOffsetOptions();
-  syncDashboardSummary();
 }
 
 function openDialog(id){
@@ -368,16 +378,10 @@ function poll(){
     document.getElementById('hwMode').value=d.hwMode;
     document.getElementById('speedProfile').value=d.speedProfile;
     document.getElementById('profileMode').value=d.profileMode?'1':'0';
-    document.getElementById('speedOffsetEnable').checked=!!d.speedOffsetEnable;
-    document.getElementById('speedOffsetPct').value=String(d.speedOffsetPct||0);
     document.getElementById('isaChime').checked=!!d.isaChime;
     document.getElementById('emergencyDet').checked=!!d.emergencyDet;
     document.getElementById('chinaMode').checked=!!d.chinaMode;
 
-    const isHw3=String(d.hwMode)==='1';
-    document.getElementById('speedOffsetEnable').disabled=!isHw3;
-    document.getElementById('speedOffsetPct').disabled=!isHw3||!d.speedOffsetEnable;
-    syncSpeedOffsetOptions();
     syncPickerButton('hwMode');
     syncPickerButton('speedProfile');
     syncPickerButton('profileMode');
@@ -411,17 +415,6 @@ function poll(){
 
 function setVal(key,val){
   fetch('/api/set?'+key+'='+val).catch(()=>{});
-  if(key==='speedOffsetEnable'||key==='hwMode'){
-    const select=document.getElementById('speedOffsetPct');
-    const hwSelect=document.getElementById('hwMode');
-    const offsetToggle=document.getElementById('speedOffsetEnable');
-    if(select&&hwSelect){
-      const nextHwMode=key==='hwMode'?String(val):String(hwSelect.value);
-      const nextOffsetEnabled=key==='speedOffsetEnable'?!!Number(val):!!(offsetToggle&&offsetToggle.checked);
-      select.disabled=nextHwMode!=='1'||!nextOffsetEnabled;
-      syncSpeedOffsetOptions();
-    }
-  }
   syncDashboardSummary();
 }
 
@@ -593,7 +586,6 @@ function deleteSavedUpstream(ssid){
 }
 
 ['hwMode','speedProfile','profileMode','scanResults'].forEach(syncPickerButton);
-syncSpeedOffsetOptions();
 syncDashboardSummary();
 
 document.addEventListener('keydown',evt=>{

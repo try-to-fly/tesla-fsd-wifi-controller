@@ -57,147 +57,45 @@
           <div class="section-tag">首屏控制</div>
           <div class="speed-card-head">
             <div>
-              <h2>HW3 速度偏移</h2>
+              <h2>HW3 智能限速</h2>
             </div>
             <div class="hardware-pill" id="hwModeBadge">硬件 --</div>
           </div>
 
           <div class="speed-hero">
             <div class="speed-quick">
-              <div class="speed-quick-label">当前偏移</div>
-              <div class="speed-quick-value" id="speedOffsetDisplay">+0%</div>
+              <div class="speed-quick-label">当前增量</div>
+              <div class="speed-quick-value" id="speedOffsetDisplay">
+                +0 km/h
+              </div>
               <div class="speed-quick-note" id="speedOffsetState">读取中</div>
             </div>
           </div>
 
           <div class="hero-controls">
-            <div class="row row-compact">
-              <span class="row-label">启用速度偏移</span>
-              <label class="toggle"
-                ><input
-                  type="checkbox"
-                  id="speedOffsetEnable"
-                  onchange="setVal('speedOffsetEnable',this.checked?1:0)" /><span
-                  class="slider"
-                ></span
-              ></label>
-            </div>
-            <div class="field hero-field">
-              <label class="field-label" for="speedOffsetPct">偏移百分比</label>
-              <div class="speed-offset-panel">
-                <select
-                  id="speedOffsetPct"
-                  class="picker-native"
-                  onchange="setVal('speedOffsetPct',this.value)"
+            <div class="speed-readonly-grid">
+              <article class="speed-info-tile">
+                <span class="speed-info-label">识别限速</span>
+                <strong class="speed-info-value" id="detectedSpeedLimitDisplay"
+                  >--</strong
                 >
-                  <option value="0" selected>+0%</option>
-                  <option value="5">+5%</option>
-                  <option value="10">+10%</option>
-                  <option value="15">+15%</option>
-                  <option value="20">+20%</option>
-                  <option value="25">+25%</option>
-                  <option value="30">+30%</option>
-                  <option value="35">+35%</option>
-                  <option value="40">+40%</option>
-                  <option value="45">+45%</option>
-                  <option value="50">+50%</option>
-                </select>
-                <div
-                  class="offset-grid"
-                  id="speedOffsetOptions"
-                  role="group"
-                  aria-label="速度偏移百分比"
+              </article>
+              <article class="speed-info-tile">
+                <span class="speed-info-label">信号来源</span>
+                <strong
+                  class="speed-info-value speed-info-meta"
+                  id="detectedSpeedSourceDisplay"
+                  >--</strong
                 >
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="0"
-                    onclick="chooseSpeedOffsetPreset('0')"
-                  >
-                    +0%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="5"
-                    onclick="chooseSpeedOffsetPreset('5')"
-                  >
-                    +5%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="10"
-                    onclick="chooseSpeedOffsetPreset('10')"
-                  >
-                    +10%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="15"
-                    onclick="chooseSpeedOffsetPreset('15')"
-                  >
-                    +15%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="20"
-                    onclick="chooseSpeedOffsetPreset('20')"
-                  >
-                    +20%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="25"
-                    onclick="chooseSpeedOffsetPreset('25')"
-                  >
-                    +25%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="30"
-                    onclick="chooseSpeedOffsetPreset('30')"
-                  >
-                    +30%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="35"
-                    onclick="chooseSpeedOffsetPreset('35')"
-                  >
-                    +35%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="40"
-                    onclick="chooseSpeedOffsetPreset('40')"
-                  >
-                    +40%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="45"
-                    onclick="chooseSpeedOffsetPreset('45')"
-                  >
-                    +45%
-                  </button>
-                  <button
-                    type="button"
-                    class="offset-chip"
-                    data-value="50"
-                    onclick="chooseSpeedOffsetPreset('50')"
-                  >
-                    +50%
-                  </button>
-                </div>
-              </div>
+              </article>
+              <article class="speed-info-tile speed-info-wide">
+                <span class="speed-info-label">自动策略</span>
+                <strong
+                  class="speed-info-value speed-info-meta"
+                  id="speedPolicySummary"
+                  >低速更积极，高速 100+ 不超过 10%</strong
+                >
+              </article>
             </div>
           </div>
         </section>
