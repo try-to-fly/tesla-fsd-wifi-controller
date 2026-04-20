@@ -133,7 +133,7 @@ h1{
 }
 
 .toolbar{
-  width:min(760px,100%);
+  width:min(820px,100%);
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
   gap:10px;
@@ -200,9 +200,9 @@ h1{
   width:100%;
   font-size:12px;
   color:var(--muted);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
+  line-height:1.4;
+  white-space:normal;
+  overflow-wrap:anywhere;
 }
 
 .dashboard-main{
@@ -429,7 +429,7 @@ h1{
 
 .speed-readonly-grid{
   display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
+  grid-template-columns:repeat(3,minmax(0,1fr));
   gap:10px;
 }
 
@@ -442,7 +442,7 @@ h1{
 }
 
 .speed-info-wide{
-  grid-column:1 / -1;
+  grid-column:2 / span 2;
 }
 
 .speed-info-label{
@@ -1224,17 +1224,129 @@ select,
   background:currentColor;
 }
 
-@media (max-width:1180px){
+@media (max-width:1240px){
+  html,
+  body{
+    height:auto;
+  }
   body{padding:10px}
+  body{
+    min-height:100svh;
+    overflow-x:hidden;
+    overflow-y:auto;
+  }
   .page{
-    height:calc(100svh - 20px);
-    min-height:calc(100vh - 20px);
+    height:auto;
+    min-height:calc(100svh - 20px);
+  }
+  .app-shell{
+    grid-template-rows:auto;
+    align-content:start;
+    gap:12px;
+  }
+  .topbar{
+    gap:10px;
+  }
+  .brand-block{
+    padding:16px 18px;
   }
   .toolbar{
-    width:min(720px,100%);
+    width:min(800px,100%);
+  }
+  .toolbar-btn{
+    min-height:92px;
+    padding:13px 14px 14px;
+    gap:8px;
+    justify-content:flex-start;
+  }
+  .toolbar-label{
+    font-size:14px;
+  }
+  .toolbar-meta{
+    display:-webkit-box;
+    min-height:2.8em;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+    overflow:hidden;
   }
   .dashboard-main{
+    grid-template-columns:minmax(332px,.88fr) minmax(0,1.12fr);
+    grid-template-rows:auto auto;
     gap:12px;
+  }
+  .speed-card{
+    gap:12px;
+  }
+  .speed-card-head{
+    align-items:center;
+  }
+  .speed-hero{
+    grid-template-columns:minmax(184px,.82fr) minmax(0,1.18fr);
+    align-items:stretch;
+  }
+  .speed-live-card{
+    padding:14px 14px 16px;
+  }
+  .speed-quick-value{
+    font-size:clamp(54px,6.2vw,78px);
+  }
+  .speed-quick-unit{
+    padding-bottom:8px;
+    font-size:16px;
+  }
+  .speed-chart-card{
+    padding:12px 12px 12px;
+  }
+  .speed-chart{
+    height:112px;
+  }
+  .hero-controls{
+    padding:10px;
+  }
+  .speed-info-tile{
+    padding:10px 12px;
+  }
+  .speed-info-value{
+    font-size:19px;
+  }
+  .speed-info-meta{
+    font-size:13px;
+    line-height:1.38;
+  }
+  .speed-info-sub{
+    margin-top:6px;
+    font-size:11px;
+    line-height:1.4;
+  }
+  .metrics-card{
+    gap:12px;
+  }
+  .metrics-grid{
+    height:100%;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    grid-auto-rows:minmax(108px,1fr);
+    align-content:stretch;
+  }
+  .metric-panel,
+  .metric-panel.wide{
+    min-height:0;
+    height:100%;
+    padding:13px 14px;
+  }
+  .metric-panel.wide{
+    grid-column:auto;
+  }
+  .metric-panel.metric-temp{
+    grid-column:span 2;
+  }
+  .metric-value{
+    font-size:clamp(26px,3vw,34px);
+  }
+  .metric-panel .status-text{
+    font-size:20px;
+  }
+  .metric-panel .status-wide{
+    font-size:15px;
   }
   .live-strip{
     grid-template-columns:repeat(4,minmax(0,1fr));
@@ -1263,13 +1375,29 @@ select,
   .dashboard-main{
     grid-template-columns:minmax(252px,.88fr) minmax(0,1.12fr);
   }
+  .speed-hero{
+    grid-template-columns:1fr;
+  }
+  .speed-readonly-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .speed-info-wide{
+    grid-column:1 / -1;
+  }
   .metrics-head{
     align-items:flex-start;
+  }
+  .metrics-grid{
+    height:auto;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    grid-template-areas:none;
+    grid-auto-rows:minmax(102px,auto);
   }
   .metric-panel{
     min-height:102px;
   }
   .metric-panel.wide{
+    grid-column:span 2;
     min-height:90px;
   }
   .live-item{
@@ -1298,7 +1426,7 @@ select,
     display:none;
   }
   .dashboard-main{
-    grid-template-columns:minmax(224px,.86fr) minmax(0,1.14fr);
+    grid-template-columns:1fr;
   }
   .speed-card-head h2,
   .metrics-head h2{
@@ -1475,13 +1603,53 @@ select,
 }
 
 @media (max-height:820px) and (min-width:641px){
-  .page{height:calc(100svh - 18px)}
-  .app-shell{gap:10px}
+  html,
+  body{
+    height:auto;
+  }
+  body{
+    min-height:100svh;
+    overflow-x:hidden;
+    overflow-y:auto;
+  }
+  .page{
+    height:auto;
+    min-height:calc(100svh - 18px);
+  }
+  .app-shell{
+    grid-template-rows:auto;
+    align-content:start;
+    gap:10px;
+  }
   .brand-block{padding:16px 20px}
   .hero-card{padding:16px}
+  .dashboard-main{
+    grid-template-rows:auto auto;
+  }
   .speed-card{gap:12px}
+  .speed-hero{
+    grid-template-columns:minmax(200px,.84fr) minmax(0,1.16fr);
+  }
+  .speed-readonly-grid{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+  .speed-info-wide{
+    grid-column:2 / span 2;
+  }
   .metric-panel{min-height:94px}
   .metric-panel.wide{min-height:86px}
+  .metrics-grid{
+    height:100%;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    grid-auto-rows:minmax(92px,1fr);
+    align-content:stretch;
+  }
+  .metric-panel.wide{
+    grid-column:auto;
+  }
+  .metric-panel.metric-temp{
+    grid-column:span 2;
+  }
   .live-item{min-height:72px}
   .speed-quick-value{font-size:60px}
   .speed-card-head p,
@@ -1683,40 +1851,40 @@ select,
           </div>
 
           <div class="metrics-grid">
-            <article class="metric-panel primary">
+            <article class="metric-panel primary metric-modified">
               <span class="metric-label">改包变化</span>
               <strong class="metric-value status-no" id="sModified">--</strong>
               <span class="metric-meta" id="sModifiedMeta">等待速率采样</span>
             </article>
-            <article class="metric-panel primary">
+            <article class="metric-panel primary metric-rx">
               <span class="metric-label">收包变化</span>
               <strong class="metric-value status-no" id="sRX">--</strong>
               <span class="metric-meta" id="sRXMeta">等待速率采样</span>
             </article>
-            <article class="metric-panel primary">
+            <article class="metric-panel primary metric-errors">
               <span class="metric-label">错误</span>
               <strong class="metric-value amber" id="sErrors">0</strong>
             </article>
-            <article class="metric-panel primary">
+            <article class="metric-panel primary metric-uptime">
               <span class="metric-label">运行时间</span>
               <strong class="metric-value metric-time" id="sUptime">0秒</strong>
             </article>
-            <article class="metric-panel">
+            <article class="metric-panel metric-can">
               <span class="metric-label">CAN 总线</span>
               <strong id="sCAN" class="status-no status-text">等待</strong>
               <span class="metric-meta" id="sCANMeta">等待第一帧 CAN</span>
             </article>
-            <article class="metric-panel">
+            <article class="metric-panel metric-fsd">
               <span class="metric-label">FSD 触发</span>
               <strong id="sFSD" class="status-no status-text">--</strong>
             </article>
-            <article class="metric-panel wide">
+            <article class="metric-panel wide metric-temp">
               <span class="metric-label">芯片温度</span>
               <strong id="sChipTemp" class="status-no status-text status-wide"
                 >--</strong
               >
             </article>
-            <article class="metric-panel wide">
+            <article class="metric-panel wide metric-thermal">
               <span class="metric-label">温控状态</span>
               <strong id="sThermal" class="status-no status-text status-wide"
                 >--</strong
