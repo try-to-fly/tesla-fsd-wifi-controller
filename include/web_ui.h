@@ -1429,7 +1429,9 @@ select,
           <div class="speed-hero">
             <div class="speed-quick">
               <div class="speed-quick-label">当前增量</div>
-              <div class="speed-quick-value" id="speedOffsetDisplay">+0 km/h</div>
+              <div class="speed-quick-value" id="speedOffsetDisplay">
+                +0 km/h
+              </div>
               <div class="speed-quick-note" id="speedOffsetState">读取中</div>
             </div>
           </div>
@@ -1438,20 +1440,27 @@ select,
             <div class="speed-readonly-grid">
               <article class="speed-info-tile">
                 <span class="speed-info-label">识别限速</span>
-                <strong class="speed-info-value" id="detectedSpeedLimitDisplay">--</strong>
+                <strong class="speed-info-value" id="detectedSpeedLimitDisplay"
+                  >--</strong
+                >
               </article>
               <article class="speed-info-tile">
                 <span class="speed-info-label">信号来源</span>
-                <strong class="speed-info-value speed-info-meta" id="detectedSpeedSourceDisplay">--</strong>
+                <strong
+                  class="speed-info-value speed-info-meta"
+                  id="detectedSpeedSourceDisplay"
+                  >--</strong
+                >
               </article>
               <article class="speed-info-tile speed-info-wide">
                 <span class="speed-info-label">自动策略</span>
-                <strong class="speed-info-value speed-info-meta" id="speedPolicySummary">低速更积极，高速 100+ 不超过 10%</strong>
+                <strong
+                  class="speed-info-value speed-info-meta"
+                  id="speedPolicySummary"
+                  >低速更积极，高速 100+ 不超过 10%</strong
+                >
               </article>
             </div>
-            <p class="hint hero-hint">
-              HW3 下在 FSD 激活后自动生效，无需手动设置。当前策略：30/40 限速按 20%，50/60 按 18%，70/80 按 15%，90 按 12%，100 及以上按 10% 自动上浮。
-            </p>
           </div>
         </section>
 

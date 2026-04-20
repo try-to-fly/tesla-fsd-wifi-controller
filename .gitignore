@@ -28,3 +28,4 @@ __pycache__/
 *.bin
 .playwright-mcp
 .codex/skills
+firmware

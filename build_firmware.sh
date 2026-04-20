@@ -20,13 +20,13 @@ usage() {
   ./build_firmware.sh [选项]
 
 功能:
-  构建 full.bin（单文件全量镜像）。
+  构建 full.bin（单文件全量镜像），并导出分包 bin。
   可选构建完成后直接刷写（会擦除整片 Flash）。
 
 选项:
   -e, --env <name>      指定 PlatformIO 环境名（默认: esp32s3）
   -c, --clean           先执行 clean 再构建
-  -o, --output <dir>    full.bin 输出目录（默认: ./firmware）
+  -o, --output <dir>    固件输出目录（默认: ./firmware）
       --flash           构建完成后立即刷写 full.bin
   -p, --port <serial>   指定串口（默认: 自动探测，仅 --flash 时需要）
   -b, --baud <num>      串口波特率（默认: 460800）
@@ -232,7 +232,16 @@ done
 
 mkdir -p "$OUTPUT_DIR"
 FULL_BIN="$OUTPUT_DIR/full.bin"
+BOOTLOADER_BIN="$OUTPUT_DIR/bootloader.bin"
+PARTITIONS_BIN="$OUTPUT_DIR/partitions.bin"
+FIRMWARE_BIN="$OUTPUT_DIR/firmware.bin"
+FLASH_LAYOUT="$OUTPUT_DIR/flash-layout.txt"
 MERGE_CHIP="$(guess_chip_for_merge)"
+
+echo "==> 导出分包 bin..."
+cp "$ARTIFACT_SRC/bootloader.bin" "$BOOTLOADER_BIN"
+cp "$ARTIFACT_SRC/partitions.bin" "$PARTITIONS_BIN"
+cp "$ARTIFACT_SRC/firmware.bin" "$FIRMWARE_BIN"
 
 echo "==> 合并 full.bin（chip: ${MERGE_CHIP}）..."
 "${ESPTOOL_CMD[@]}" --chip "$MERGE_CHIP" merge-bin -o "$FULL_BIN" \
@@ -241,9 +250,26 @@ echo "==> 合并 full.bin（chip: ${MERGE_CHIP}）..."
   0x8000 "$ARTIFACT_SRC/partitions.bin" \
   0x10000 "$ARTIFACT_SRC/firmware.bin"
 
+cat > "$FLASH_LAYOUT" <<EOF
+构建环境: $ENV_NAME
+输出目录: $OUTPUT_DIR
+
+文件与刷写地址:
+- full.bin        -> 0x0
+- bootloader.bin  -> 0x0
+- partitions.bin  -> 0x8000
+- firmware.bin    -> 0x10000
+
+说明:
+- full.bin 是单文件全量镜像，适合整片刷写
+- firmware.bin 是应用 OTA 包，适合常规增量更新
+- bootloader.bin / partitions.bin 适合需要分步刷写时单独使用
+EOF
+
 echo "==> 构建完成"
-echo "==> 输出文件: $FULL_BIN"
-ls -lh "$FULL_BIN"
+echo "==> 输出文件:"
+ls -lh "$FULL_BIN" "$BOOTLOADER_BIN" "$PARTITIONS_BIN" "$FIRMWARE_BIN"
+echo "==> 刷写说明: $FLASH_LAYOUT"
 
 if [[ "$DRY_RUN" -eq 1 && "$FLASH_AFTER_BUILD" -eq 0 ]]; then
   echo "警告: --dry-run 仅在 --flash 模式下生效，已忽略"

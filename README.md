@@ -61,3 +61,24 @@ python3 scripts/generate_web_ui_header.py
 ### 3) 编译时自动注入（已配置）
 
 `platformio.ini` 已启用 `pre:scripts/pio_prebuild.py`，每次 `pio run` 前都会自动执行 UI 注入，不需要手动同步。
+
+## 本地构建固件产物
+
+如果你希望一次性拿到完整刷机包和分包 bin，直接运行：
+
+```bash
+./build_firmware.sh
+```
+
+默认会输出到 `firmware/` 目录，包含：
+
+- `full.bin`
+  适合整片全量刷写，地址 `0x0`
+- `bootloader.bin`
+  分步刷写时使用，地址 `0x0`
+- `partitions.bin`
+  分步刷写时使用，地址 `0x8000`
+- `firmware.bin`
+  应用固件包，适合 OTA / 常规增量更新，地址 `0x10000`
+- `flash-layout.txt`
+  记录上述文件的刷写地址说明
