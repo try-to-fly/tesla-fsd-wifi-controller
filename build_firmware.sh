@@ -10,9 +10,15 @@ ENV_NAME="${PIO_ENV:-esp32s3}"
 CLEAN_BUILD=0
 OUTPUT_DIR="$PROJECT_DIR/firmware"
 FLASH_AFTER_BUILD=0
+FLASH_MODE="preserve"
 PORT=""
 BAUD="460800"
 DRY_RUN=0
+PARTITIONS_CSV=""
+NVS_OFFSET=""
+NVS_SIZE=""
+NVS_BACKUP_PATH=""
+NVS_BACKUP_NOTE=""
 
 usage() {
   cat <<'EOF'
@@ -21,22 +27,27 @@ usage() {
 
 功能:
   构建 full.bin（单文件全量镜像），并导出分包 bin。
-  可选构建完成后直接刷写（会擦除整片 Flash）。
+  可选构建完成后直接刷写。
+  默认仅刷写 firmware.bin 到 0x10000，保留 NVS 配置；
+  使用 --full-flash 才会整片擦除并刷写 full.bin。
 
 选项:
   -e, --env <name>      指定 PlatformIO 环境名（默认: esp32s3）
   -c, --clean           先执行 clean 再构建
   -o, --output <dir>    固件输出目录（默认: ./firmware）
-      --flash           构建完成后立即刷写 full.bin
+      --flash           构建完成后立即刷写
+      --preserve-data   保留已有配置，仅刷写 firmware.bin（默认）
+      --full-flash      全量刷写 full.bin，并擦除整片 Flash
   -p, --port <serial>   指定串口（默认: 自动探测，仅 --flash 时需要）
   -b, --baud <num>      串口波特率（默认: 460800）
-      --dry-run         仅打印刷写命令，不执行（需搭配 --flash）
+  --dry-run         仅打印刷写命令，不执行（需搭配 --flash）
   -h, --help            显示帮助
 
 示例:
   ./build_firmware.sh
   ./build_firmware.sh -c
   ./build_firmware.sh --flash -p /dev/cu.usbmodem101
+  ./build_firmware.sh --flash --full-flash -p /dev/cu.usbmodem101
   ./build_firmware.sh --flash --dry-run
 EOF
 }
@@ -59,6 +70,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --flash)
       FLASH_AFTER_BUILD=1
+      shift
+      ;;
+    --preserve-data)
+      FLASH_MODE="preserve"
+      shift
+      ;;
+    --full-flash)
+      FLASH_MODE="full"
       shift
       ;;
     -p|--port)
@@ -134,6 +153,107 @@ else
 EOF
   exit 1
 fi
+
+sanitize_label() {
+  printf '%s' "$1" | tr -c '[:alnum:]._-' '_'
+}
+
+resolve_partitions_csv() {
+  local partitions_entry partitions_path
+  partitions_entry="$(
+    awk -F= '
+      /^[[:space:]]*board_build\.partitions[[:space:]]*=/ {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+        print $2
+        exit
+      }
+    ' "$PLATFORMIO_INI"
+  )"
+
+  if [[ -z "$partitions_entry" ]]; then
+    partitions_path="$PROJECT_DIR/min_spiffs.csv"
+  elif [[ "$partitions_entry" = /* ]]; then
+    partitions_path="$partitions_entry"
+  else
+    partitions_path="$PROJECT_DIR/$partitions_entry"
+  fi
+
+  if [[ ! -f "$partitions_path" ]]; then
+    echo "错误: 未找到分区表文件 $partitions_path"
+    exit 1
+  fi
+
+  PARTITIONS_CSV="$partitions_path"
+}
+
+resolve_nvs_partition() {
+  resolve_partitions_csv
+  read -r NVS_OFFSET NVS_SIZE < <(
+    awk -F',' '
+      function trim(s) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+        return s
+      }
+      /^[[:space:]]*#/ { next }
+      NF {
+        name = trim($1)
+        subtype = trim($3)
+        offset = trim($4)
+        size = trim($5)
+        if (name == "nvs" || subtype == "nvs") {
+          print offset, size
+          exit
+        }
+      }
+    ' "$PARTITIONS_CSV"
+  )
+
+  if [[ -z "$NVS_OFFSET" || -z "$NVS_SIZE" ]]; then
+    echo "错误: 未能从分区表中解析 NVS 分区: $PARTITIONS_CSV"
+    exit 1
+  fi
+}
+
+backup_nvs_partition() {
+  local backup_dir="$1"
+  local label="$2"
+  local timestamp backup_path backup_note
+
+  mkdir -p "$backup_dir"
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  label="$(sanitize_label "$label")"
+  [[ -z "$label" ]] && label="device"
+
+  backup_path="$backup_dir/nvs-${label}-${timestamp}.bin"
+  backup_note="${backup_path%.bin}.txt"
+
+  echo "==> 备份 NVS 配置"
+  echo "  Partitions: $PARTITIONS_CSV"
+  echo "  NVS:        $NVS_OFFSET + $NVS_SIZE"
+  echo "  Output:     $backup_path"
+
+  "${ESPTOOL_CMD[@]}" \
+    --chip "$CHIP_ARG" \
+    --port "$PORT" \
+    --baud "$BAUD" \
+    --before default-reset \
+    --after hard-reset \
+    read-flash "$NVS_OFFSET" "$NVS_SIZE" "$backup_path"
+
+  cat > "$backup_note" <<EOF
+创建时间: $timestamp
+分区表: $PARTITIONS_CSV
+NVS 地址: $NVS_OFFSET
+NVS 大小: $NVS_SIZE
+备份文件: $backup_path
+
+恢复命令:
+./restore_nvs_backup.sh -p $PORT -f $backup_path
+EOF
+
+  NVS_BACKUP_PATH="$backup_path"
+  NVS_BACKUP_NOTE="$backup_note"
+}
 
 detect_port() {
   local detected=()
@@ -261,8 +381,8 @@ cat > "$FLASH_LAYOUT" <<EOF
 - firmware.bin    -> 0x10000
 
 说明:
-- full.bin 是单文件全量镜像，适合整片刷写
-- firmware.bin 是应用 OTA 包，适合常规增量更新
+- full.bin 是单文件全量镜像，适合整片刷写；搭配擦除会清空 NVS 配置
+- firmware.bin 是应用 OTA 包，刷写到 0x10000 可保留当前 NVS 配置
 - bootloader.bin / partitions.bin 适合需要分步刷写时单独使用
 EOF
 
@@ -282,27 +402,54 @@ if [[ "$FLASH_AFTER_BUILD" -eq 1 ]]; then
 
   need_cmd sed
   detect_chip_from_port
+  resolve_nvs_partition
 
-  FLASH_CMD=(
-    "${ESPTOOL_CMD[@]}"
-    --chip "$CHIP_ARG"
-    --port "$PORT"
-    --baud "$BAUD"
-    --before default-reset
-    --after hard-reset
-    write-flash
-    --erase-all
-    -z
-    0x0 "$FULL_BIN"
-  )
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    backup_nvs_partition "$OUTPUT_DIR/backups" "$ENV_NAME"
+  else
+    echo "==> dry-run 模式: 未执行 NVS 备份"
+    echo "==> 实际刷写前会先备份 NVS: $NVS_OFFSET + $NVS_SIZE"
+  fi
 
   echo "==> 刷写配置"
   echo "  Port:       $PORT"
   echo "  Baud:       $BAUD"
   echo "  Chip:       ${CHIP_TYPE:-unknown}"
-  echo "  Full image: $FULL_BIN (offset 0x0)"
-  echo
-  echo "==> 即将执行全量刷写（会擦除整片 Flash）"
+  if [[ "$FLASH_MODE" == "full" ]]; then
+    FLASH_CMD=(
+      "${ESPTOOL_CMD[@]}"
+      --chip "$CHIP_ARG"
+      --port "$PORT"
+      --baud "$BAUD"
+      --before default-reset
+      --after hard-reset
+      write-flash
+      --erase-all
+      -z
+      0x0 "$FULL_BIN"
+    )
+    echo "  Mode:       full-flash"
+    echo "  Image:      $FULL_BIN (offset 0x0)"
+    echo
+    echo "==> 即将执行全量刷写（会擦除整片 Flash 和 NVS 配置）"
+  else
+    FLASH_CMD=(
+      "${ESPTOOL_CMD[@]}"
+      --chip "$CHIP_ARG"
+      --port "$PORT"
+      --baud "$BAUD"
+      --before default-reset
+      --after hard-reset
+      write-flash
+      -z
+      0x10000 "$FIRMWARE_BIN"
+    )
+    echo "  Mode:       preserve-data"
+    echo "  Image:      $FIRMWARE_BIN (offset 0x10000)"
+    echo
+    echo "==> 即将执行保留配置刷写（仅更新应用分区，NVS 配置保留）"
+    echo "==> 如需同步 bootloader / partitions 或彻底清空，请改用 --full-flash"
+  fi
   printf '  %q' "${FLASH_CMD[@]}"
   echo
 
@@ -313,4 +460,8 @@ if [[ "$FLASH_AFTER_BUILD" -eq 1 ]]; then
 
   "${FLASH_CMD[@]}"
   echo "==> 刷写完成"
+  if [[ -n "$NVS_BACKUP_PATH" ]]; then
+    echo "==> NVS 备份: $NVS_BACKUP_PATH"
+    echo "==> 恢复说明: $NVS_BACKUP_NOTE"
+  fi
 fi

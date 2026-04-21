@@ -82,3 +82,36 @@ python3 scripts/generate_web_ui_header.py
   应用固件包，适合 OTA / 常规增量更新，地址 `0x10000`
 - `flash-layout.txt`
   记录上述文件的刷写地址说明
+
+如果直接构建后刷写：
+
+```bash
+./build_firmware.sh --flash
+```
+
+现在默认只会把 `firmware.bin` 写到 `0x10000`，会保留设备里现有的 NVS 配置，例如 Wi-Fi、网页配置等。
+并且脚本会在真正刷写前，自动把当前设备的 NVS 配置 dump 到 `firmware/backups/`。
+
+只有在你明确需要清空设备、同步 bootloader / partitions，或排查异常时，才用全量刷写：
+
+```bash
+./build_firmware.sh --flash --full-flash
+```
+
+如果是刷 GitHub Release，也同样默认保留配置：
+
+```bash
+./flash_latest_release.sh
+```
+
+它同样会在刷写前自动备份当前设备的 NVS 配置。
+
+需要彻底清空再刷时，再加 `--full-flash`。
+
+如果误操作导致配置丢失，可以把之前 dump 的备份恢复回去：
+
+```bash
+./restore_nvs_backup.sh -f firmware/backups/nvs-xxx.bin -p /dev/cu.usbmodem101
+```
+
+恢复脚本在写回前，也会先备份一次当前设备的 NVS，避免二次误操作。
