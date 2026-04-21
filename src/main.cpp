@@ -54,6 +54,8 @@ static constexpr uint32_t DEBUG_HEARTBEAT_PERSIST_MS = 10000;
 static constexpr size_t DEBUG_LOG_MAX_BYTES = 48 * 1024;
 static constexpr size_t DEBUG_LOG_RETAIN_BYTES = 24 * 1024;
 static constexpr const char* DEBUG_LOG_PATH = "/debug.log";
+static constexpr uint32_t OTA_STATUS_STALE_MS = 8000;
+static constexpr uint32_t OTA_RESTART_DELAY_MS = 1500;
 
 // ── Globals ──
 static TWAIDriver     canDriver;
@@ -100,6 +102,32 @@ static bool debugLogReady = false;
 
 static DNSFilterConfig dnsCfg;
 static const char* TAG = "FSD";
+
+enum class OTAStatusPhase : uint8_t {
+    Idle = 0,
+    Uploading,
+    Finishing,
+    SuccessRebooting,
+    FailedBegin,
+    FailedWrite,
+    FailedEnd,
+    Aborted
+};
+
+struct OTAStatus {
+    OTAStatusPhase phase = OTAStatusPhase::Idle;
+    String filename;
+    size_t bytesReceived = 0;
+    size_t totalBytes = 0;
+    uint8_t errorCode = 0;
+    String errorMessage;
+    String hintMessage;
+    bool shouldReboot = false;
+    uint32_t updatedAtMillis = 0;
+    uint32_t startedAtMillis = 0;
+};
+
+static OTAStatus otaStatus;
 
 enum class ThermalLevel : uint8_t {
     Normal = 0,
@@ -153,6 +181,177 @@ String jsonEscape(const String& value) {
         }
     }
     return escaped;
+}
+
+const char* getOTAStatusPhaseName(OTAStatusPhase phase) {
+    switch (phase) {
+        case OTAStatusPhase::Idle:             return "idle";
+        case OTAStatusPhase::Uploading:        return "uploading";
+        case OTAStatusPhase::Finishing:        return "finishing";
+        case OTAStatusPhase::SuccessRebooting: return "success-rebooting";
+        case OTAStatusPhase::FailedBegin:      return "failed-begin";
+        case OTAStatusPhase::FailedWrite:      return "failed-write";
+        case OTAStatusPhase::FailedEnd:        return "failed-end";
+        case OTAStatusPhase::Aborted:          return "aborted";
+        default:                               return "idle";
+    }
+}
+
+String normalizeBinFileName(const String& filename) {
+    String normalized = filename;
+    normalized.trim();
+    normalized.toLowerCase();
+    return normalized;
+}
+
+bool isWrongOTABinaryName(const String& filename) {
+    String normalized = normalizeBinFileName(filename);
+    return normalized.endsWith("full.bin")
+        || normalized.endsWith("bootloader.bin")
+        || normalized.endsWith("partitions.bin");
+}
+
+String buildOTAHintMessage(OTAStatusPhase phase, const String& filename, uint8_t errorCode, const String& errorMessage) {
+    if (isWrongOTABinaryName(filename)) {
+        return "WebUI OTA 只能上传应用固件 firmware.bin，full.bin / bootloader.bin / partitions.bin 需要走整片刷写。";
+    }
+
+    switch (phase) {
+        case OTAStatusPhase::SuccessRebooting:
+            return "固件写入完成，设备即将重启。等待 2-5 秒后重新连接页面。";
+        case OTAStatusPhase::FailedBegin:
+            if (errorCode == UPDATE_ERROR_SPACE || errorCode == UPDATE_ERROR_SIZE) {
+                return "设备没有足够 OTA 空间，或上传的 bin 超过应用分区大小。请重新构建 firmware.bin 后再试。";
+            }
+            if (errorCode == UPDATE_ERROR_NO_PARTITION) {
+                return "设备未找到可用 OTA 分区，请确认当前固件和分区表支持 OTA。";
+            }
+            return "设备拒绝开始写入固件。请确认上传的是当前版本构建出的 firmware.bin，并查看串口日志。";
+        case OTAStatusPhase::FailedWrite:
+            if (errorCode == UPDATE_ERROR_WRITE || errorCode == UPDATE_ERROR_ERASE || errorCode == UPDATE_ERROR_READ) {
+                return "固件已经传到设备，但写入 Flash 失败。请检查供电、Flash 健康状况，并查看串口日志。";
+            }
+            if (errorCode == UPDATE_ERROR_STREAM) {
+                return "上传流在设备侧被打断。通过设备热点 OTA 时更容易出现，建议靠近设备或改用局域网 IP。";
+            }
+            return "设备在写入固件时出错。请重试一次，并留意串口里的 Update 报错。";
+        case OTAStatusPhase::FailedEnd:
+            if (errorCode == UPDATE_ERROR_MAGIC_BYTE) {
+                return "这个 bin 不是可启动的应用镜像。请确认选择的是 firmware.bin，而不是 full.bin 或其他分包。";
+            }
+            if (errorCode == UPDATE_ERROR_MD5 || errorCode == UPDATE_ERROR_ACTIVATE) {
+                return "固件已传完，但校验或激活失败。建议重新导出固件并再次上传。";
+            }
+            return "固件上传完成，但收尾校验失败。请查看串口日志确认具体原因。";
+        case OTAStatusPhase::Aborted:
+            if (errorMessage.indexOf("重启") >= 0) {
+                return "设备在上传过程中离线，可能已经重启。请重新连接页面并确认当前固件版本。";
+            }
+            return "上传链路在完成前中断。通过设备热点 OTA 时，如果热点切信道、信号抖动或浏览器切后台，都可能导致中断。";
+        default:
+            return "";
+    }
+}
+
+String buildOTAErrorMessage(const String& prefix, uint8_t errorCode) {
+    String message = prefix;
+    if (errorCode == UPDATE_ERROR_OK) return message;
+    message += ": ";
+    message += Update.errorString();
+    message += " (code ";
+    message += String(static_cast<unsigned>(errorCode));
+    message += ")";
+    return message;
+}
+
+void setOTAStatus(
+    OTAStatusPhase phase,
+    const String& filename,
+    size_t bytesReceived,
+    size_t totalBytes,
+    uint8_t errorCode,
+    const String& errorMessage,
+    bool shouldReboot
+) {
+    otaStatus.phase = phase;
+    otaStatus.filename = filename;
+    otaStatus.bytesReceived = bytesReceived;
+    otaStatus.totalBytes = totalBytes;
+    otaStatus.errorCode = errorCode;
+    otaStatus.errorMessage = errorMessage;
+    otaStatus.hintMessage = buildOTAHintMessage(phase, filename, errorCode, errorMessage);
+    otaStatus.shouldReboot = shouldReboot;
+    otaStatus.updatedAtMillis = millis();
+    if (phase == OTAStatusPhase::Uploading && bytesReceived == 0) {
+        otaStatus.startedAtMillis = otaStatus.updatedAtMillis;
+    } else if (otaStatus.startedAtMillis == 0) {
+        otaStatus.startedAtMillis = otaStatus.updatedAtMillis;
+    }
+}
+
+void markOTAUploadAbortedIfStale() {
+    if (otaStatus.phase != OTAStatusPhase::Uploading && otaStatus.phase != OTAStatusPhase::Finishing) return;
+
+    uint32_t now = millis();
+    if (otaStatus.updatedAtMillis == 0 || now - otaStatus.updatedAtMillis < OTA_STATUS_STALE_MS) return;
+
+    if (Update.isRunning()) Update.abort();
+    setOTAStatus(
+        OTAStatusPhase::Aborted,
+        otaStatus.filename,
+        otaStatus.bytesReceived,
+        otaStatus.totalBytes,
+        UPDATE_ERROR_ABORT,
+        "上传连接已中断，设备没有收到完整固件。",
+        false
+    );
+}
+
+String buildOTAStatusJson() {
+    markOTAUploadAbortedIfStale();
+
+    String filename = jsonEscape(otaStatus.filename);
+    String errorMessage = jsonEscape(otaStatus.errorMessage);
+    String hintMessage = jsonEscape(otaStatus.hintMessage);
+    String json;
+
+    json.reserve(320);
+    json += "{";
+    json += "\"phase\":\"";
+    json += getOTAStatusPhaseName(otaStatus.phase);
+    json += "\",\"filename\":\"";
+    json += filename;
+    json += "\",\"bytesReceived\":";
+    json += String(static_cast<unsigned>(otaStatus.bytesReceived));
+    json += ",\"totalBytes\":";
+    json += otaStatus.totalBytes > 0 ? String(static_cast<unsigned>(otaStatus.totalBytes)) : "null";
+    json += ",\"errorCode\":";
+    json += String(static_cast<unsigned>(otaStatus.errorCode));
+    json += ",\"errorMessage\":\"";
+    json += errorMessage;
+    json += "\",\"hint\":\"";
+    json += hintMessage;
+    json += "\",\"shouldReboot\":";
+    json += (otaStatus.shouldReboot ? "true" : "false");
+    json += ",\"updatedAtMs\":";
+    json += String(static_cast<unsigned>(otaStatus.updatedAtMillis));
+    json += ",\"startedAtMs\":";
+    json += String(static_cast<unsigned>(otaStatus.startedAtMillis));
+    json += "}";
+    return json;
+}
+
+String buildOTAResponseJson(bool ok) {
+    String statusJson = buildOTAStatusJson();
+    if (statusJson.endsWith("}")) statusJson.remove(statusJson.length() - 1);
+
+    String json;
+    json.reserve(statusJson.length() + 24);
+    json = statusJson;
+    json += ",\"ok\":";
+    json += (ok ? "true" : "false");
+    json += "}";
+    return json;
 }
 
 String formatHexByte(uint8_t value) {
@@ -1230,6 +1429,10 @@ void setupWebServer() {
         req->send(200, "application/json", buildStatusJson());
     });
 
+    server.on("/api/ota/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "application/json", buildOTAStatusJson());
+    });
+
     server.on("/api/debug/log", HTTP_GET, [](AsyncWebServerRequest* req) {
         if (!debugLogReady) {
             req->send(503, "text/plain; charset=utf-8", "debug log storage unavailable");
@@ -1428,28 +1631,102 @@ void setupWebServer() {
 
     server.on("/api/ota", HTTP_POST,
         [](AsyncWebServerRequest* req) {
-            bool ok = !Update.hasError();
-            req->send(200, "text/plain", ok ? "OK" : "FAIL");
+            bool ok = !Update.hasError() && otaStatus.phase == OTAStatusPhase::SuccessRebooting;
+            req->send(ok ? 200 : 500, "application/json", buildOTAResponseJson(ok));
             if (ok) otaPendingRestart = true;
         },
         [](AsyncWebServerRequest* req, const String& filename,
            size_t index, uint8_t* data, size_t len, bool final) {
+            size_t totalBytes = req->contentLength();
+
             if (index == 0) {
+                if (Update.isRunning()) Update.abort();
+                Update.clearError();
+                otaPendingRestart = false;
+                setOTAStatus(
+                    OTAStatusPhase::Uploading,
+                    filename,
+                    0,
+                    totalBytes,
+                    UPDATE_ERROR_OK,
+                    "正在接收固件...",
+                    false
+                );
                 Serial.printf("OTA start: %s\n", filename.c_str());
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    uint8_t errorCode = Update.getError();
+                    String errorMessage = buildOTAErrorMessage("无法开始 OTA", errorCode);
                     Update.printError(Serial);
+                    setOTAStatus(
+                        OTAStatusPhase::FailedBegin,
+                        filename,
+                        0,
+                        totalBytes,
+                        errorCode,
+                        errorMessage,
+                        false
+                    );
+                    return;
                 }
             }
+
             if (Update.isRunning()) {
-                if (Update.write(data, len) != len) {
+                size_t written = Update.write(data, len);
+                size_t bytesReceived = index + written;
+                if (written != len) {
+                    uint8_t errorCode = Update.getError();
+                    String errorMessage = buildOTAErrorMessage("固件写入失败", errorCode);
                     Update.printError(Serial);
+                    setOTAStatus(
+                        OTAStatusPhase::FailedWrite,
+                        filename,
+                        bytesReceived,
+                        totalBytes,
+                        errorCode,
+                        errorMessage,
+                        false
+                    );
+                    return;
                 }
+
+                setOTAStatus(
+                    final ? OTAStatusPhase::Finishing : OTAStatusPhase::Uploading,
+                    filename,
+                    index + len,
+                    totalBytes,
+                    UPDATE_ERROR_OK,
+                    final ? "固件已接收，正在完成校验..." : "正在接收固件...",
+                    false
+                );
             }
+
             if (final) {
+                if (!Update.isRunning()) return;
+
                 if (Update.end(true)) {
                     Serial.printf("OTA done: %u bytes\n", (unsigned)(index + len));
+                    setOTAStatus(
+                        OTAStatusPhase::SuccessRebooting,
+                        filename,
+                        index + len,
+                        totalBytes,
+                        UPDATE_ERROR_OK,
+                        "固件写入完成，设备准备重启。",
+                        true
+                    );
                 } else {
+                    uint8_t errorCode = Update.getError();
+                    String errorMessage = buildOTAErrorMessage("固件校验失败", errorCode);
                     Update.printError(Serial);
+                    setOTAStatus(
+                        OTAStatusPhase::FailedEnd,
+                        filename,
+                        index + len,
+                        totalBytes,
+                        errorCode,
+                        errorMessage,
+                        false
+                    );
                 }
             }
         }
@@ -1566,7 +1843,7 @@ void setup() {
 
 void loop() {
     if (otaPendingRestart) {
-        delay(1000);  // let response finish sending
+        delay(OTA_RESTART_DELAY_MS);  // let response finish sending
         ESP.restart();
     }
 

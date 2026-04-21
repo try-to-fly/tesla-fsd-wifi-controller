@@ -908,8 +908,10 @@ select,
 .msg{
   min-height:16px;
   margin-top:8px;
-  text-align:center;
+  text-align:left;
   font-size:12px;
+  line-height:1.5;
+  white-space:pre-line;
 }
 
 .msg.ok{color:var(--green)}
@@ -2412,6 +2414,15 @@ let lastVehicleSpeedUptimeMs=null;
 const COUNTER_WRAP=4294967296;
 const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
 const MAX_VEHICLE_SPEED_POINTS=40;
+const OTA_TRACE_POLL_MS=1200;
+const OTA_TRACE_TIMEOUT_MS=20000;
+let otaTraceTimer=0;
+let otaTraceStartedAt=0;
+let otaTraceGeneration=0;
+let otaTraceController=null;
+let otaTraceClientUploadComplete=false;
+let otaTraceSawLikelySuccessPhase=false;
+let otaClientUploadComplete=false;
 const hwModeLabels={
   '0':'LEGACY',
   '1':'HW3',
@@ -3361,29 +3372,249 @@ function clearBlockedDns(){
   });
 }
 
+function formatBytes(bytes){
+  if(typeof bytes!=='number'||!Number.isFinite(bytes)||bytes<0)return '--';
+  if(bytes<1024)return String(Math.round(bytes))+' B';
+  if(bytes<1024*1024)return (bytes/1024).toFixed(bytes<10*1024?1:0)+' KB';
+  return (bytes/(1024*1024)).toFixed(bytes<10*1024*1024?2:1)+' MB';
+}
+
+function setOtaMessage(text,kind){
+  const msg=document.getElementById('otaMsg');
+  if(!msg)return;
+  msg.textContent=text||'';
+  msg.className='msg'+(kind?' '+kind:'');
+}
+
+function setOtaProgress(percent){
+  const prog=document.getElementById('progWrap');
+  const bar=document.getElementById('progBar');
+  if(!prog||!bar)return;
+  prog.style.display='block';
+  bar.style.width=Math.max(0,Math.min(100,percent))+'%';
+}
+
+function setOtaUploadEnabled(enabled){
+  const btn=document.getElementById('uploadBtn');
+  const file=document.getElementById('fwFile').files[0];
+  if(btn)btn.disabled=enabled?!file:true;
+}
+
+function stopOtaTrace(){
+  otaTraceGeneration++;
+  if(otaTraceTimer){
+    clearTimeout(otaTraceTimer);
+    otaTraceTimer=0;
+  }
+  if(otaTraceController){
+    otaTraceController.abort();
+    otaTraceController=null;
+  }
+  otaTraceStartedAt=0;
+  otaTraceClientUploadComplete=false;
+  otaTraceSawLikelySuccessPhase=false;
+}
+
+function scheduleOtaTrace(traceId){
+  otaTraceTimer=setTimeout(()=>traceOtaStatus(traceId),OTA_TRACE_POLL_MS);
+}
+
+function parseJsonSafe(text){
+  if(!text)return null;
+  try{
+    return JSON.parse(text);
+  }catch(_err){
+    return null;
+  }
+}
+
+function getWrongOtaFileMessage(file){
+  if(!file||!file.name)return '';
+  const lower=file.name.trim().toLowerCase();
+  if(lower.endsWith('full.bin'))return 'WebUI OTA 只能上传 firmware.bin，不能直接上传 full.bin。';
+  if(lower.endsWith('bootloader.bin')||lower.endsWith('partitions.bin'))return 'bootloader.bin / partitions.bin 不能通过 WebUI OTA 更新。请选择应用固件 firmware.bin。';
+  return '';
+}
+
+function buildOtaStatusLines(status){
+  const lines=[];
+  if(status&&status.errorMessage)lines.push(status.errorMessage);
+  if(status&&typeof status.bytesReceived==='number'&&Number.isFinite(status.bytesReceived)&&status.bytesReceived>0){
+    let progress='设备侧已接收 '+formatBytes(status.bytesReceived);
+    if(typeof status.totalBytes==='number'&&Number.isFinite(status.totalBytes)&&status.totalBytes>0){
+      progress+=' / HTTP 请求体 '+formatBytes(status.totalBytes);
+    }
+    lines.push(progress);
+  }
+  if(status&&status.hint)lines.push(status.hint);
+  return lines.filter(Boolean);
+}
+
+function renderOtaStatus(status,fallbackMessage){
+  const phase=status&&status.phase?status.phase:'idle';
+  const hasBytes=!!status&&typeof status.bytesReceived==='number'&&Number.isFinite(status.bytesReceived)&&status.bytesReceived>0;
+  const hasTotal=!!status&&typeof status.totalBytes==='number'&&Number.isFinite(status.totalBytes)&&status.totalBytes>0;
+  if(hasBytes&&hasTotal)setOtaProgress(Math.round(status.bytesReceived/status.totalBytes*100));
+
+  switch(phase){
+    case 'uploading':
+      setOtaMessage(['设备正在接收固件...'].concat(buildOtaStatusLines(status)).join('\n'),'');
+      return false;
+    case 'finishing':
+      setOtaProgress(100);
+      setOtaMessage(['固件已传到设备，正在完成校验...'].concat(buildOtaStatusLines(status)).join('\n'),'');
+      return false;
+    case 'success-rebooting':
+      setOtaProgress(100);
+      setOtaMessage(buildOtaStatusLines(status).join('\n')||'固件写入完成，设备正在重启。','ok');
+      stopOtaTrace();
+      return true;
+    case 'failed-begin':
+    case 'failed-write':
+    case 'failed-end':
+    case 'aborted':
+      setOtaMessage(buildOtaStatusLines(status).join('\n')||fallbackMessage||'升级失败','err');
+      setOtaUploadEnabled(true);
+      stopOtaTrace();
+      return true;
+    case 'idle':
+    default:
+      if(fallbackMessage){
+        setOtaMessage(fallbackMessage,'err');
+        setOtaUploadEnabled(true);
+      }
+      stopOtaTrace();
+      return true;
+  }
+}
+
+function finishOtaTraceAfterIdle(){
+  const lines=[];
+  if(otaTraceClientUploadComplete||otaTraceSawLikelySuccessPhase){
+    setOtaProgress(100);
+    lines.push('设备已重新上线，上一轮 OTA 响应大概率被重启打断。');
+    lines.push('如果页面功能正常，本次升级通常已经完成。');
+    setOtaMessage(lines.join('\n'),'');
+  }else{
+    lines.push('设备已重新上线，但本次 OTA 状态已在重启后丢失。');
+    lines.push('浏览器端上传没有完整结束，更像是链路中断或设备异常重启。');
+    lines.push('建议重试一次，并结合串口日志确认原因。');
+    setOtaMessage(lines.join('\n'),'');
+  }
+  setOtaUploadEnabled(true);
+  stopOtaTrace();
+}
+
+function traceOtaStatus(traceId){
+  if(traceId!==otaTraceGeneration)return;
+  const controller=typeof AbortController==='function'?new AbortController():null;
+  otaTraceController=controller;
+  const requestInit={cache:'no-store'};
+  if(controller)requestInit.signal=controller.signal;
+
+  fetch('/api/ota/status',requestInit).then(r=>{
+    if(traceId!==otaTraceGeneration)return null;
+    if(!r.ok)throw new Error('status unavailable');
+    return r.json();
+  }).then(status=>{
+    if(traceId!==otaTraceGeneration||!status)return;
+    if(otaTraceController===controller)otaTraceController=null;
+    const phase=status&&status.phase?status.phase:'idle';
+    if(phase==='finishing'||phase==='success-rebooting'){
+      otaTraceSawLikelySuccessPhase=true;
+    }
+    if(phase==='idle'){
+      finishOtaTraceAfterIdle();
+      return;
+    }
+    if(renderOtaStatus(status,''))return;
+    if(Date.now()-otaTraceStartedAt>OTA_TRACE_TIMEOUT_MS){
+      const lines=['设备暂时没有返回明确失败原因。'].concat(buildOtaStatusLines(status));
+      lines.push('请结合串口日志继续排查。');
+      setOtaMessage(lines.join('\n'),'err');
+      setOtaUploadEnabled(true);
+      stopOtaTrace();
+      return;
+    }
+    scheduleOtaTrace(traceId);
+  }).catch(err=>{
+    if(traceId!==otaTraceGeneration)return;
+    if(otaTraceController===controller)otaTraceController=null;
+    if(err&&err.name==='AbortError')return;
+    if(Date.now()-otaTraceStartedAt>OTA_TRACE_TIMEOUT_MS){
+      setOtaMessage('连接已断开，但设备长时间没有恢复在线，未能拿到诊断结果。请查看串口日志。','err');
+      setOtaUploadEnabled(true);
+      stopOtaTrace();
+      return;
+    }
+    setOtaMessage('连接已断开，正在等待设备重新上线并回传诊断信息...','err');
+    scheduleOtaTrace(traceId);
+  });
+}
+
+function startOtaTrace(initialMessage){
+  stopOtaTrace();
+  otaTraceStartedAt=Date.now();
+  otaTraceClientUploadComplete=otaClientUploadComplete;
+  if(initialMessage)setOtaMessage(initialMessage,'err');
+  traceOtaStatus(otaTraceGeneration);
+}
+
 function fileChosen(inp){
-  document.getElementById('fileName').textContent=inp.files[0]?inp.files[0].name:'未选择文件';
-  document.getElementById('uploadBtn').disabled=!inp.files[0];
+  const file=inp.files[0];
+  document.getElementById('fileName').textContent=file?file.name:'未选择文件';
+  stopOtaTrace();
+  setOtaProgress(0);
+  document.getElementById('progWrap').style.display='none';
+  const wrongFileMessage=getWrongOtaFileMessage(file);
+  if(wrongFileMessage){
+    setOtaMessage(wrongFileMessage,'err');
+    document.getElementById('uploadBtn').disabled=true;
+    return;
+  }
+  setOtaMessage('','');
+  document.getElementById('uploadBtn').disabled=!file;
 }
 
 function doOTA(){
   let file=document.getElementById('fwFile').files[0];
   if(!file)return;
+  const wrongFileMessage=getWrongOtaFileMessage(file);
+  if(wrongFileMessage){
+    setOtaMessage(wrongFileMessage,'err');
+    return;
+  }
+  stopOtaTrace();
+  otaClientUploadComplete=false;
   let xhr=new XMLHttpRequest();
-  let prog=document.getElementById('progWrap');
-  let bar=document.getElementById('progBar');
-  let msg=document.getElementById('otaMsg');
-  prog.style.display='block';
-  bar.style.width='0%';
-  msg.textContent='';
-  msg.className='msg';
+  setOtaProgress(0);
+  setOtaMessage('开始上传，设备正在准备 OTA...','');
   document.getElementById('uploadBtn').disabled=true;
-  xhr.upload.addEventListener('progress',e=>{if(e.lengthComputable)bar.style.width=Math.round(e.loaded/e.total*100)+'%';});
+  xhr.upload.addEventListener('progress',e=>{
+    if(e.lengthComputable){
+      const percent=Math.round(e.loaded/e.total*100);
+      otaClientUploadComplete=e.loaded>=e.total||percent>=100;
+      setOtaProgress(percent);
+      setOtaMessage('浏览器正在上传固件...','');
+    }
+  });
   xhr.onload=function(){
-    if(xhr.status===200){msg.textContent='上传成功，正在重启...';msg.className='msg ok';}
-    else{msg.textContent='上传失败: '+xhr.statusText;msg.className='msg err';document.getElementById('uploadBtn').disabled=false;}
+    const result=parseJsonSafe(xhr.responseText);
+    if(result&&typeof result==='object'){
+      renderOtaStatus(result,xhr.status===200?'固件写入完成，设备正在重启。':'升级失败');
+      return;
+    }
+    if(xhr.status===200){
+      setOtaProgress(100);
+      setOtaMessage('固件写入完成，设备正在重启。','ok');
+      return;
+    }
+    setOtaMessage('升级失败，设备没有返回可解析的诊断信息。','err');
+    setOtaUploadEnabled(true);
   };
-  xhr.onerror=function(){msg.textContent='连接失败';msg.className='msg err';document.getElementById('uploadBtn').disabled=false;};
+  xhr.onerror=function(){
+    startOtaTrace('连接已中断，正在读取设备侧诊断信息...');
+  };
   let form=new FormData();
   form.append('firmware',file);
   xhr.open('POST','/api/ota');

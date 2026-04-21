@@ -892,8 +892,10 @@ select,
 .msg{
   min-height:16px;
   margin-top:8px;
-  text-align:center;
+  text-align:left;
   font-size:12px;
+  line-height:1.5;
+  white-space:pre-line;
 }
 
 .msg.ok{color:var(--green)}
