@@ -14,11 +14,14 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <SPIFFS.h>
 #include <esp_log.h>
+#include <freertos/semphr.h>
 
 #include "lwip/lwip_napt.h"
 
 #include "can_frame_types.h"
+#include "debug_log.h"
 #include "dns_whitelist.h"
 #include "dns_ip_blocker.h"
 #include "drivers/twai_driver.h"
@@ -47,6 +50,10 @@ static constexpr float CHIP_TEMP_THROTTLE_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_PROTECT_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_EMA_ALPHA = 0.25f;
 static constexpr uint32_t DEBUG_HEARTBEAT_MS = 3000;
+static constexpr uint32_t DEBUG_HEARTBEAT_PERSIST_MS = 10000;
+static constexpr size_t DEBUG_LOG_MAX_BYTES = 48 * 1024;
+static constexpr size_t DEBUG_LOG_RETAIN_BYTES = 24 * 1024;
+static constexpr const char* DEBUG_LOG_PATH = "/debug.log";
 
 // ── Globals ──
 static TWAIDriver     canDriver;
@@ -88,6 +95,8 @@ struct UpstreamWiFiConfig {
 static UpstreamWiFiConfig wifiCfg;
 static volatile bool upstreamScanInProgress = false;
 static LocalAPConfig apCfg;
+static SemaphoreHandle_t debugLogMutex = nullptr;
+static bool debugLogReady = false;
 
 static DNSFilterConfig dnsCfg;
 static const char* TAG = "FSD";
@@ -144,6 +153,191 @@ String jsonEscape(const String& value) {
         }
     }
     return escaped;
+}
+
+String formatHexByte(uint8_t value) {
+    char buffer[3];
+    snprintf(buffer, sizeof(buffer), "%02X", value);
+    return String(buffer);
+}
+
+bool lockDebugLog() {
+    return debugLogMutex != nullptr && xSemaphoreTake(debugLogMutex, pdMS_TO_TICKS(100)) == pdTRUE;
+}
+
+void unlockDebugLog() {
+    if (debugLogMutex != nullptr) xSemaphoreGive(debugLogMutex);
+}
+
+void trimDebugLogLocked() {
+    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
+    if (!file) return;
+
+    size_t size = file.size();
+    if (size <= DEBUG_LOG_MAX_BYTES) {
+        file.close();
+        return;
+    }
+
+    size_t start = size > DEBUG_LOG_RETAIN_BYTES ? size - DEBUG_LOG_RETAIN_BYTES : 0;
+    if (start > 0) {
+        file.seek(start);
+        while (file.available()) {
+            if (file.read() == '\n') break;
+        }
+    }
+
+    String tail;
+    tail.reserve(DEBUG_LOG_RETAIN_BYTES + 64);
+    while (file.available()) {
+        tail += static_cast<char>(file.read());
+    }
+    file.close();
+
+    File out = SPIFFS.open(DEBUG_LOG_PATH, FILE_WRITE);
+    if (!out) return;
+    out.print(tail);
+    out.close();
+}
+
+void appendDebugLogRecord(const char* tag, const String& body) {
+    if (!debugLogReady || !lockDebugLog()) return;
+
+    String line;
+    line.reserve(body.length() + 32);
+    line += "[";
+    line += String(static_cast<unsigned long>(millis()));
+    line += "][";
+    line += tag;
+    line += "] ";
+    line += body;
+    line += "\n";
+
+    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_APPEND);
+    if (file) {
+        file.print(line);
+        file.close();
+        trimDebugLogLocked();
+    }
+
+    unlockDebugLog();
+}
+
+size_t getDebugLogSizeBytes() {
+    if (!debugLogReady || !lockDebugLog()) return 0;
+
+    size_t size = 0;
+    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
+    if (file) {
+        size = file.size();
+        file.close();
+    }
+
+    unlockDebugLog();
+    return size;
+}
+
+String readDebugLogText() {
+    if (!debugLogReady || !lockDebugLog()) return "";
+
+    String content;
+    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
+    if (file) {
+        size_t size = file.size();
+        content.reserve(size + 1);
+        while (file.available()) {
+            content += static_cast<char>(file.read());
+        }
+        file.close();
+    }
+
+    unlockDebugLog();
+    return content;
+}
+
+void clearDebugLogStorage() {
+    if (!debugLogReady || !lockDebugLog()) return;
+    SPIFFS.remove(DEBUG_LOG_PATH);
+    unlockDebugLog();
+}
+
+void debugLogEvent(const char* tag, const char* message) {
+    appendDebugLogRecord(tag, String(message));
+}
+
+void debugLogHW3Limit(
+    uint16_t fusedKph,
+    uint16_t visionKph,
+    uint16_t mapKph,
+    uint16_t detectedKph,
+    uint8_t detectedSource
+) {
+    String body;
+    body.reserve(96);
+    body += "selected=";
+    body += String(detectedKph);
+    body += " src=";
+    body += String(detectedSource);
+    body += " fused=";
+    body += String(fusedKph);
+    body += " vision=";
+    body += String(visionKph);
+    body += " map=";
+    body += String(mapKph);
+    appendDebugLogRecord("HW3-LIMIT", body);
+}
+
+void debugLogHW3Mux0(
+    bool fsdTriggered,
+    bool fsdEnable,
+    uint8_t rawUserOffsetKph,
+    uint8_t d3,
+    uint8_t d4
+) {
+    String body;
+    body.reserve(96);
+    body += "trig=";
+    body += String(static_cast<int>(fsdTriggered));
+    body += " fsdEn=";
+    body += String(static_cast<int>(fsdEnable));
+    body += " rawKph=";
+    body += String(rawUserOffsetKph);
+    body += " d3=0x";
+    body += formatHexByte(d3);
+    body += " d4=0x";
+    body += formatHexByte(d4);
+    appendDebugLogRecord("HW3-MUX0", body);
+}
+
+void debugLogHW3Mux2(
+    uint16_t detectedSpeedLimitKph,
+    uint8_t detectedSource,
+    uint8_t rawUserOffsetKph,
+    uint8_t appliedOffsetKph,
+    int speedOffset,
+    uint8_t d0,
+    uint8_t d1,
+    bool sendOk
+) {
+    String body;
+    body.reserve(128);
+    body += "limit=";
+    body += String(detectedSpeedLimitKph);
+    body += " src=";
+    body += String(detectedSource);
+    body += " rawKph=";
+    body += String(rawUserOffsetKph);
+    body += " appliedKph=";
+    body += String(appliedOffsetKph);
+    body += " encoded=";
+    body += String(speedOffset);
+    body += " d0=0x";
+    body += formatHexByte(d0);
+    body += " d1=0x";
+    body += formatHexByte(d1);
+    body += " send=";
+    body += String(static_cast<int>(sendOk));
+    appendDebugLogRecord("HW3-MUX2", body);
 }
 
 bool isReservedUpstreamSSID(const String& ssid) {
@@ -344,6 +538,7 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 
 void logRuntimeHeartbeat() {
     static uint32_t lastBeat = 0;
+    static uint32_t lastPersistBeat = 0;
     uint32_t now = millis();
     if (lastBeat != 0 && now - lastBeat < DEBUG_HEARTBEAT_MS) return;
     lastBeat = now;
@@ -381,6 +576,37 @@ void logRuntimeHeartbeat() {
         static_cast<unsigned long>(twaiStatus.rx_missed_count),
         static_cast<unsigned long>(twaiStatus.tx_failed_count)
     );
+
+    if (debugLogReady && (lastPersistBeat == 0 || (now - lastPersistBeat) >= DEBUG_HEARTBEAT_PERSIST_MS)) {
+        lastPersistBeat = now;
+        String body;
+        body.reserve(160);
+        body += "rx=";
+        body += String(static_cast<unsigned long>(cfg.rxCount));
+        body += " mod=";
+        body += String(static_cast<unsigned long>(cfg.modifiedCount));
+        body += " err=";
+        body += String(static_cast<unsigned long>(cfg.errorCount));
+        body += " fsdTrig=";
+        body += String(static_cast<int>(cfg.fsdTriggered));
+        body += " fsdEn=";
+        body += String(static_cast<int>(cfg.fsdEnable));
+        body += " hw=";
+        body += String(static_cast<unsigned>(cfg.hwMode));
+        body += " twai=";
+        body += getTwaiStateName(twaiStatus.state);
+        body += " rxErr=";
+        body += String(static_cast<unsigned long>(twaiStatus.rx_error_counter));
+        body += " txErr=";
+        body += String(static_cast<unsigned long>(twaiStatus.tx_error_counter));
+        body += " busErr=";
+        body += String(static_cast<unsigned long>(twaiStatus.bus_error_count));
+        body += " rxMiss=";
+        body += String(static_cast<unsigned long>(twaiStatus.rx_missed_count));
+        body += " txFail=";
+        body += String(static_cast<unsigned long>(twaiStatus.tx_failed_count));
+        appendDebugLogRecord("HEARTBEAT", body);
+    }
 }
 
 int performUpstreamScan(UpstreamScanResult* results, size_t maxResults) {
@@ -860,9 +1086,10 @@ String buildStatusJson() {
     uint32_t dnsBlockedCount = 0;
     size_t dnsBlockedRecentCount = 0;
     String dnsBlockedRequests = buildBlockedDnsRequestsJson(dnsBlockedCount, dnsBlockedRecentCount);
+    size_t debugLogBytes = getDebugLogSizeBytes();
     String json;
 
-    json.reserve(7300);
+    json.reserve(7400);
     json += "{";
     json += "\"rx\":";
     json += String((unsigned)cfg.rxCount);
@@ -916,6 +1143,10 @@ String buildStatusJson() {
     json += vehicleSpeedSeen ? String((unsigned)vehicleSpeedAgeMs) : "null";
     json += ",\"vehicleSpeedValid\":";
     json += (vehicleSpeedValid ? "true" : "false");
+    json += ",\"debugLogReady\":";
+    json += (debugLogReady ? "true" : "false");
+    json += ",\"debugLogBytes\":";
+    json += String(static_cast<unsigned>(debugLogBytes));
     json += ",\"isaChime\":";
     json += String((int)cfg.isaChimeSuppress);
     json += ",\"emergencyDet\":";
@@ -997,6 +1228,19 @@ void setupWebServer() {
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
         req->send(200, "application/json", buildStatusJson());
+    });
+
+    server.on("/api/debug/log", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!debugLogReady) {
+            req->send(503, "text/plain; charset=utf-8", "debug log storage unavailable");
+            return;
+        }
+        req->send(200, "text/plain; charset=utf-8", readDebugLogText());
+    });
+
+    server.on("/api/debug/log/clear", HTTP_GET, [](AsyncWebServerRequest* req) {
+        clearDebugLogStorage();
+        req->send(200, "text/plain; charset=utf-8", "OK");
     });
 
     server.on("/api/dns/blocked/clear", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -1257,7 +1501,14 @@ void setup() {
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_LED, LOW);
 
+    debugLogMutex = xSemaphoreCreateMutex();
     loadConfig();
+    debugLogReady = SPIFFS.begin(true);
+    if (debugLogReady) {
+        appendDebugLogRecord("BOOT", "logger ready");
+    } else {
+        ESP_LOGE(TAG, "SPIFFS mount failed, debug log disabled");
+    }
     ESP_LOGI(
         TAG,
         "config loaded hw=%u profile=%u china=%d apSSID=%s upstreamEnabled=%d upstreamSaved=%u",
@@ -1268,6 +1519,19 @@ void setup() {
         static_cast<int>(wifiCfg.enabled),
         static_cast<unsigned>(wifiCfg.networkCount)
     );
+    if (debugLogReady) {
+        String bootConfig;
+        bootConfig.reserve(96);
+        bootConfig += "hw=";
+        bootConfig += String(static_cast<unsigned>(cfg.hwMode));
+        bootConfig += " profile=";
+        bootConfig += String(static_cast<unsigned>(cfg.speedProfile));
+        bootConfig += " china=";
+        bootConfig += String(static_cast<int>(cfg.chinaMode));
+        bootConfig += " fsdEn=";
+        bootConfig += String(static_cast<int>(cfg.fsdEnable));
+        appendDebugLogRecord("CONFIG", bootConfig);
+    }
     Serial.printf("Config loaded: HW=%d, Profile=%d\n", cfg.hwMode, cfg.speedProfile);
 
     cfg.uptimeStart = millis();
@@ -1275,10 +1539,12 @@ void setup() {
     if (canDriver.init()) {
         cfg.canOK = true;
         ESP_LOGI(TAG, "TWAI ready bitrate=500k txPin=%d rxPin=%d", static_cast<int>(TWAI_TX_PIN), static_cast<int>(TWAI_RX_PIN));
+        if (debugLogReady) appendDebugLogRecord("CAN", "twai init ok");
         Serial.println("ESP32 TWAI ready @ 500k");
     } else {
         cfg.canOK = false;
         ESP_LOGE(TAG, "TWAI init failed txPin=%d rxPin=%d", static_cast<int>(TWAI_TX_PIN), static_cast<int>(TWAI_RX_PIN));
+        if (debugLogReady) appendDebugLogRecord("CAN", "twai init failed");
         Serial.println("CAN init failed!");
     }
 
