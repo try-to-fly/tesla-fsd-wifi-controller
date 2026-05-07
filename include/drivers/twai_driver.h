@@ -18,7 +18,7 @@ struct TWAIDriver : public CanDriver {
 
     bool init() override {
         twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(txPin, rxPin, TWAI_MODE_NORMAL);
-        g_config.rx_queue_len = 32;
+        g_config.rx_queue_len = 128;
         g_config.tx_queue_len = 16;
         twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
         twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();

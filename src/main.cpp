@@ -50,7 +50,6 @@ static constexpr float CHIP_TEMP_THROTTLE_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_PROTECT_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_EMA_ALPHA = 0.25f;
 static constexpr uint32_t DEBUG_HEARTBEAT_MS = 3000;
-static constexpr uint32_t DEBUG_HEARTBEAT_PERSIST_MS = 10000;
 static constexpr size_t DEBUG_LOG_MAX_BYTES = 48 * 1024;
 static constexpr size_t DEBUG_LOG_RETAIN_BYTES = 24 * 1024;
 static constexpr const char* DEBUG_LOG_PATH = "/debug.log";
@@ -737,7 +736,6 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 
 void logRuntimeHeartbeat() {
     static uint32_t lastBeat = 0;
-    static uint32_t lastPersistBeat = 0;
     uint32_t now = millis();
     if (lastBeat != 0 && now - lastBeat < DEBUG_HEARTBEAT_MS) return;
     lastBeat = now;
@@ -775,37 +773,6 @@ void logRuntimeHeartbeat() {
         static_cast<unsigned long>(twaiStatus.rx_missed_count),
         static_cast<unsigned long>(twaiStatus.tx_failed_count)
     );
-
-    if (debugLogReady && (lastPersistBeat == 0 || (now - lastPersistBeat) >= DEBUG_HEARTBEAT_PERSIST_MS)) {
-        lastPersistBeat = now;
-        String body;
-        body.reserve(160);
-        body += "rx=";
-        body += String(static_cast<unsigned long>(cfg.rxCount));
-        body += " mod=";
-        body += String(static_cast<unsigned long>(cfg.modifiedCount));
-        body += " err=";
-        body += String(static_cast<unsigned long>(cfg.errorCount));
-        body += " fsdTrig=";
-        body += String(static_cast<int>(cfg.fsdTriggered));
-        body += " fsdEn=";
-        body += String(static_cast<int>(cfg.fsdEnable));
-        body += " hw=";
-        body += String(static_cast<unsigned>(cfg.hwMode));
-        body += " twai=";
-        body += getTwaiStateName(twaiStatus.state);
-        body += " rxErr=";
-        body += String(static_cast<unsigned long>(twaiStatus.rx_error_counter));
-        body += " txErr=";
-        body += String(static_cast<unsigned long>(twaiStatus.tx_error_counter));
-        body += " busErr=";
-        body += String(static_cast<unsigned long>(twaiStatus.bus_error_count));
-        body += " rxMiss=";
-        body += String(static_cast<unsigned long>(twaiStatus.rx_missed_count));
-        body += " txFail=";
-        body += String(static_cast<unsigned long>(twaiStatus.tx_failed_count));
-        appendDebugLogRecord("HEARTBEAT", body);
-    }
 }
 
 int performUpstreamScan(UpstreamScanResult* results, size_t maxResults) {
