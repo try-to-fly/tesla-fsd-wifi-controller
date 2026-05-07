@@ -14,6 +14,7 @@ let diagnosticsHideTimer=0;
 const COUNTER_WRAP=4294967296;
 const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
 const MAX_VEHICLE_SPEED_POINTS=40;
+const VEHICLE_SPEED_META_MAX_AGE_MS=30000;
 const OTA_TRACE_POLL_MS=1200;
 const OTA_TRACE_TIMEOUT_MS=20000;
 let otaTraceTimer=0;
@@ -200,8 +201,8 @@ function formatVehicleSpeedAge(ageMs){
   if(ageMs<120)return '刚更新';
   if(ageMs<1000)return String(Math.round(ageMs/10)*10)+' ms前';
   if(ageMs<10000)return (ageMs/1000).toFixed(1)+' 秒前';
-  if(ageMs<60000)return String(Math.round(ageMs/1000))+' 秒前';
-  return String(Math.round(ageMs/60000))+' 分钟前';
+  if(ageMs<VEHICLE_SPEED_META_MAX_AGE_MS)return String(Math.round(ageMs/1000))+' 秒前';
+  return '';
 }
 
 function formatVehicleSpeedValue(speedKph){
@@ -376,7 +377,8 @@ function updateVehicleSpeedTelemetry(data){
     const ageLabel=formatVehicleSpeedAge(Number(data.vehicleSpeedAgeMs));
     setTextIfPresent('vehicleSpeedMeta',[sourceLabel,ageLabel].filter(Boolean).join(' · '));
   }else if(typeof data.vehicleSpeedAgeMs==='number'&&Number.isFinite(data.vehicleSpeedAgeMs)){
-    setTextIfPresent('vehicleSpeedMeta','车速数据暂停 · 上次更新 '+formatVehicleSpeedAge(data.vehicleSpeedAgeMs));
+    const ageLabel=formatVehicleSpeedAge(data.vehicleSpeedAgeMs);
+    setTextIfPresent('vehicleSpeedMeta',ageLabel?'车速数据暂停 · 上次更新 '+ageLabel:'车速数据暂停');
   }else{
     setTextIfPresent('vehicleSpeedMeta','等待 CAN 车速');
   }
