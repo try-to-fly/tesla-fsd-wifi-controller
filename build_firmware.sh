@@ -13,6 +13,7 @@ FLASH_AFTER_BUILD=0
 FLASH_MODE="preserve"
 PORT=""
 BAUD="460800"
+NVS_BACKUP_BAUD="${NVS_BACKUP_BAUD:-115200}"
 DRY_RUN=0
 PARTITIONS_CSV=""
 NVS_OFFSET=""
@@ -40,6 +41,7 @@ usage() {
       --full-flash      全量刷写 full.bin，并擦除整片 Flash
   -p, --port <serial>   指定串口（默认: 自动探测，仅 --flash 时需要）
   -b, --baud <num>      串口波特率（默认: 460800）
+      --backup-baud <n> NVS 备份波特率（默认: 115200）
   --dry-run         仅打印刷写命令，不执行（需搭配 --flash）
   -h, --help            显示帮助
 
@@ -88,6 +90,11 @@ while [[ $# -gt 0 ]]; do
     -b|--baud)
       [[ $# -lt 2 ]] && { echo "错误: $1 需要一个参数"; exit 1; }
       BAUD="$2"
+      shift 2
+      ;;
+    --backup-baud)
+      [[ $# -lt 2 ]] && { echo "错误: $1 需要一个参数"; exit 1; }
+      NVS_BACKUP_BAUD="$2"
       shift 2
       ;;
     --dry-run)
@@ -217,7 +224,8 @@ resolve_nvs_partition() {
 backup_nvs_partition() {
   local backup_dir="$1"
   local label="$2"
-  local timestamp backup_path backup_note
+  local timestamp backup_path backup_tmp backup_note backup_baud backup_ok
+  local backup_bauds=()
 
   mkdir -p "$backup_dir"
   timestamp="$(date +%Y%m%d-%H%M%S)"
@@ -225,26 +233,53 @@ backup_nvs_partition() {
   [[ -z "$label" ]] && label="device"
 
   backup_path="$backup_dir/nvs-${label}-${timestamp}.bin"
+  backup_tmp="${backup_path}.tmp"
   backup_note="${backup_path%.bin}.txt"
 
   echo "==> 备份 NVS 配置"
   echo "  Partitions: $PARTITIONS_CSV"
   echo "  NVS:        $NVS_OFFSET + $NVS_SIZE"
+  echo "  Baud:       $NVS_BACKUP_BAUD"
   echo "  Output:     $backup_path"
 
-  "${ESPTOOL_CMD[@]}" \
-    --chip "$CHIP_ARG" \
-    --port "$PORT" \
-    --baud "$BAUD" \
-    --before default-reset \
-    --after hard-reset \
-    read-flash "$NVS_OFFSET" "$NVS_SIZE" "$backup_path"
+  rm -f "$backup_path" "$backup_tmp"
+  backup_ok=0
+  backup_bauds+=("$NVS_BACKUP_BAUD")
+  if [[ "$NVS_BACKUP_BAUD" != "115200" ]]; then
+    backup_bauds+=("115200")
+  fi
+
+  for backup_baud in "${backup_bauds[@]}"; do
+    [[ -z "$backup_baud" ]] && continue
+    [[ "$backup_ok" -eq 1 ]] && break
+
+    rm -f "$backup_tmp"
+    if "${ESPTOOL_CMD[@]}" \
+      --chip "$CHIP_ARG" \
+      --port "$PORT" \
+      --baud "$backup_baud" \
+      --before default-reset \
+      --after no-reset \
+      read-flash "$NVS_OFFSET" "$NVS_SIZE" "$backup_tmp"; then
+      mv "$backup_tmp" "$backup_path"
+      backup_ok=1
+    elif [[ "$backup_baud" != "115200" ]]; then
+      echo "警告: NVS 备份在 ${backup_baud} 波特率失败，改用 115200 重试"
+    fi
+  done
+
+  if [[ "$backup_ok" -ne 1 ]]; then
+    rm -f "$backup_tmp"
+    echo "错误: NVS 备份失败，已停止刷写以避免覆盖配置前没有备份"
+    exit 1
+  fi
 
   cat > "$backup_note" <<EOF
 创建时间: $timestamp
 分区表: $PARTITIONS_CSV
 NVS 地址: $NVS_OFFSET
 NVS 大小: $NVS_SIZE
+备份波特率: $NVS_BACKUP_BAUD
 备份文件: $backup_path
 
 恢复命令:
@@ -408,12 +443,13 @@ if [[ "$FLASH_AFTER_BUILD" -eq 1 ]]; then
     backup_nvs_partition "$OUTPUT_DIR/backups" "$ENV_NAME"
   else
     echo "==> dry-run 模式: 未执行 NVS 备份"
-    echo "==> 实际刷写前会先备份 NVS: $NVS_OFFSET + $NVS_SIZE"
+    echo "==> 实际刷写前会先备份 NVS: $NVS_OFFSET + $NVS_SIZE @ $NVS_BACKUP_BAUD baud"
   fi
 
   echo "==> 刷写配置"
   echo "  Port:       $PORT"
   echo "  Baud:       $BAUD"
+  echo "  NVS Backup: $NVS_BACKUP_BAUD"
   echo "  Chip:       ${CHIP_TYPE:-unknown}"
   if [[ "$FLASH_MODE" == "full" ]]; then
     FLASH_CMD=(
