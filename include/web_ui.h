@@ -15,363 +15,526 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <title>FSD 控制器</title>
     <style>
 :root{
-  --bg:#050a14;
-  --bg-soft:#0b1323;
-  --panel:rgba(12,20,37,.92);
-  --panel-strong:#121d33;
-  --panel-soft:rgba(19,30,52,.76);
-  --line:rgba(125,211,252,.16);
-  --line-strong:rgba(125,211,252,.28);
-  --text:#edf5ff;
-  --muted:#90a7c7;
-  --muted-strong:#c1d0e5;
-  --accent:#e31937;
-  --accent-strong:#ff4d67;
+  --bg:#02050b;
+  --bg-2:#07101d;
+  --surface:rgba(8,16,30,.82);
+  --surface-strong:rgba(12,23,42,.96);
+  --surface-soft:rgba(16,31,55,.62);
+  --line:rgba(125,211,252,.17);
+  --line-strong:rgba(125,211,252,.34);
+  --text:#f3f8ff;
+  --muted:#8ea4c4;
+  --muted-strong:#c5d3e8;
   --cyan:#5fd8ff;
+  --cyan-soft:rgba(95,216,255,.16);
   --green:#22c55e;
   --amber:#f59e0b;
   --red:#ef4444;
-  --shadow:0 24px 70px rgba(0,0,0,.34);
+  --tesla:#e31937;
+  --shadow:0 24px 90px rgba(0,0,0,.42);
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%}
+html,body{min-height:100%}
 body{
   font-family:"PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  background:
-    radial-gradient(circle at 12% 10%,rgba(95,216,255,.16),transparent 28%),
-    radial-gradient(circle at 88% 12%,rgba(227,25,55,.18),transparent 30%),
-    linear-gradient(160deg,#040812 0%,#08101d 48%,#050a14 100%);
   color:var(--text);
-  height:100svh;
-  min-height:100vh;
+  background:
+    linear-gradient(rgba(95,216,255,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(95,216,255,.03) 1px,transparent 1px),
+    radial-gradient(circle at 20% 12%,rgba(95,216,255,.16),transparent 34%),
+    radial-gradient(circle at 86% 18%,rgba(227,25,55,.16),transparent 30%),
+    linear-gradient(155deg,#02050b 0%,#07101d 52%,#030712 100%);
+  background-size:42px 42px,42px 42px,auto,auto,auto;
+  min-height:100svh;
   overflow:hidden;
-  padding:12px;
+  padding:14px;
+}
+
+button,
+input,
+select,
+textarea{
+  font:inherit;
+}
+
+button{
+  touch-action:manipulation;
 }
 
 .page{
-  width:min(1400px,100%);
-  height:calc(100svh - 24px);
-  min-height:calc(100vh - 24px);
+  width:min(1440px,100%);
+  height:calc(100svh - 28px);
+  min-height:680px;
   margin:0 auto;
 }
 
 .app-shell{
   display:grid;
   grid-template-rows:auto minmax(0,1fr);
-  gap:14px;
+  gap:12px;
 }
 
-.topbar{
+.hud-topbar{
+  min-height:52px;
   display:flex;
-  align-items:stretch;
+  align-items:center;
   justify-content:space-between;
   gap:12px;
 }
 
-.brand-block,
-.toolbar-btn,
-.hero-card,
-.live-item,
-.dialog-sheet,
-.picker-sheet{
-  background:linear-gradient(180deg,rgba(20,32,54,.94) 0%,rgba(8,14,27,.96) 100%);
-  border:1px solid var(--line);
-  box-shadow:var(--shadow);
-}
-
-.brand-block{
-  flex:1;
+.hud-identity{
   min-width:0;
-  border-radius:24px;
-  padding:18px 22px;
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  color:var(--muted-strong);
+  font-size:13px;
+  font-weight:700;
+  letter-spacing:.2px;
+}
+
+.hud-name{
+  color:var(--text);
+  font-size:14px;
+}
+
+.hud-divider{
+  width:1px;
+  height:18px;
+  background:var(--line);
+}
+
+.live-dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 14px rgba(34,197,94,.8);
+}
+
+.hud-actions{
   position:relative;
-  overflow:hidden;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  z-index:20;
 }
 
-.brand-block:before,
-.hero-card:before{
-  content:"";
+.hud-popover-wrap{
+  position:relative;
+}
+
+.icon-btn{
+  width:46px;
+  height:46px;
+  border:1px solid var(--line);
+  border-radius:16px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--muted-strong);
+  background:rgba(8,16,30,.56);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 12px 32px rgba(0,0,0,.22);
+  cursor:pointer;
+  transition:background .2s ease,border-color .2s ease,color .2s ease,transform .2s ease;
+}
+
+.icon-btn svg{
+  width:22px;
+  height:22px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+.icon-btn:hover,
+.icon-btn:focus-visible,
+.icon-btn.active{
+  color:var(--cyan);
+  border-color:var(--line-strong);
+  background:rgba(95,216,255,.12);
+}
+
+.icon-btn:hover{
+  transform:translateY(-1px);
+}
+
+.icon-btn:focus-visible,
+.settings-menu button:focus-visible,
+.mini-close:focus-visible,
+.dialog-close:focus-visible,
+.picker-close:focus-visible,
+.save-btn:focus-visible,
+.upload-btn:focus-visible,
+.ghost-btn:focus-visible,
+.file-btn:focus-visible,
+.picker-trigger:focus-visible,
+.text-input:focus{
+  outline:none;
+  box-shadow:0 0 0 2px rgba(95,216,255,.24);
+}
+
+.settings-menu,
+.diagnostics-popover{
   position:absolute;
-  inset:auto auto 0 0;
-  width:160px;
-  height:160px;
-  background:radial-gradient(circle,rgba(95,216,255,.14),transparent 70%);
-  pointer-events:none;
+  top:calc(100% + 10px);
+  right:0;
+  display:none;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(10,19,35,.98) 0%,rgba(5,10,20,.98) 100%);
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(18px);
 }
 
-.brand-kicker,
-.section-tag,
+.settings-menu.open,
+.diagnostics-popover.open,
+.details-wrap:hover .diagnostics-popover{
+  display:block;
+}
+
+.settings-menu{
+  width:min(300px,calc(100vw - 28px));
+  padding:8px;
+  border-radius:18px;
+}
+
+.settings-menu button{
+  width:100%;
+  min-height:58px;
+  border:none;
+  border-radius:12px;
+  background:transparent;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px 12px;
+  text-align:left;
+  cursor:pointer;
+  transition:background .18s ease,color .18s ease;
+}
+
+.settings-menu button:hover{
+  background:rgba(95,216,255,.1);
+}
+
+.settings-menu span{
+  font-weight:800;
+  font-size:14px;
+}
+
+.settings-menu small{
+  min-width:0;
+  color:var(--muted);
+  font-size:12px;
+  text-align:right;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.diagnostics-popover{
+  width:min(520px,calc(100vw - 28px));
+  max-height:min(78svh,680px);
+  overflow:auto;
+  border-radius:22px;
+  padding:14px;
+}
+
+.popover-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:12px;
+  color:var(--muted-strong);
+  font-size:13px;
+  font-weight:800;
+  letter-spacing:1.2px;
+  text-transform:uppercase;
+}
+
+.mini-close{
+  width:32px;
+  height:32px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(18,32,54,.84);
+  color:var(--muted);
+  font-size:20px;
+  line-height:1;
+  cursor:pointer;
+}
+
+.diagnostics-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+
+.diag-item{
+  min-width:0;
+  min-height:78px;
+  border:1px solid rgba(125,211,252,.11);
+  border-radius:14px;
+  background:rgba(16,31,55,.58);
+  padding:11px 12px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  gap:8px;
+}
+
+.diag-item.compact{
+  min-height:68px;
+}
+
+.diag-item span,
+.data-label,
+.telemetry-item span,
+.run-item span,
+.curve-head,
+.curve-meta,
 .card-title,
 .metric-label,
 .live-label,
 .mini-stat-label,
 .field-label{
   text-transform:uppercase;
-  letter-spacing:1.6px;
+  letter-spacing:1.3px;
 }
 
-.brand-kicker{
-  font-size:11px;
-  color:var(--cyan);
-  opacity:.9;
-}
-
-h1{
-  font-size:clamp(26px,4vw,40px);
-  line-height:1.05;
-  margin-top:8px;
-  font-weight:800;
-}
-
-.page-subtitle{
-  margin-top:10px;
-  max-width:680px;
-  font-size:13px;
-  line-height:1.6;
+.diag-item span{
   color:var(--muted);
+  font-size:10px;
 }
 
-.toolbar{
-  width:min(820px,100%);
-  display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:10px;
-}
-
-.toolbar-btn{
-  border:none;
-  border-radius:20px;
-  padding:14px 16px;
+.diag-item strong{
+  min-width:0;
   color:var(--text);
-  display:flex;
-  flex-direction:column;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:10px;
-  cursor:pointer;
-  transition:border-color .2s ease,transform .2s ease,background .2s ease;
-}
-
-.toolbar-btn:hover,
-.toolbar-btn:focus-visible,
-.secondary-btn:hover,
-.secondary-btn:focus-visible,
-.save-btn:hover:not(:disabled),
-.upload-btn:hover:not(:disabled),
-.ghost-btn:hover:not(:disabled),
-.picker-trigger:hover:not(:disabled),
-.picker-trigger:focus-visible,
-.dialog-close:hover,
-.dialog-close:focus-visible,
-.file-btn:hover{
-  border-color:var(--line-strong);
-}
-
-.toolbar-btn:hover,
-.secondary-btn:hover,
-.save-btn:hover:not(:disabled),
-.upload-btn:hover:not(:disabled),
-.ghost-btn:hover:not(:disabled),
-.picker-trigger:hover:not(:disabled),
-.file-btn:hover{
-  transform:translateY(-1px);
-}
-
-.toolbar-btn:focus-visible,
-.secondary-btn:focus-visible,
-.save-btn:focus-visible,
-.upload-btn:focus-visible,
-.ghost-btn:focus-visible,
-.picker-trigger:focus-visible,
-.text-input:focus,
-.dialog-close:focus-visible,
-.file-btn:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px rgba(95,216,255,.2);
-}
-
-.toolbar-label{
-  font-size:15px;
-  font-weight:700;
-}
-
-.toolbar-meta{
-  width:100%;
-  font-size:12px;
-  color:var(--muted);
-  line-height:1.4;
-  white-space:normal;
+  font-size:17px;
+  line-height:1.22;
+  font-weight:800;
   overflow-wrap:anywhere;
 }
 
-.dashboard-main{
+.diag-item small{
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.35;
+}
+
+.hud-main{
   min-height:0;
   display:grid;
-  grid-template-columns:minmax(280px,.9fr) minmax(0,1.1fr);
   grid-template-rows:minmax(0,1fr) auto;
-  gap:14px;
-}
-
-.hero-card{
-  min-height:0;
-  border-radius:28px;
-  padding:18px;
-  position:relative;
-  overflow:hidden;
-}
-
-.section-tag{
-  font-size:10px;
-  color:var(--cyan);
-  margin-bottom:14px;
-}
-
-.card-title{
-  margin-bottom:10px;
-  font-size:11px;
-  color:var(--muted);
-  font-weight:700;
-}
-
-.speed-card{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
-
-.speed-card-head{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
   gap:12px;
 }
 
-.speed-card-head h2,
-.metrics-head h2{
-  font-size:clamp(26px,3vw,34px);
-  line-height:1.08;
+.speed-stage{
+  min-height:0;
+  position:relative;
+  display:grid;
+  grid-template-rows:minmax(0,.88fr) minmax(190px,.62fr);
+  gap:14px;
+  border:1px solid rgba(125,211,252,.08);
+  border-radius:28px;
+  padding:24px;
+  overflow:hidden;
+  background:
+    linear-gradient(90deg,rgba(95,216,255,.06) 1px,transparent 1px),
+    linear-gradient(rgba(95,216,255,.045) 1px,transparent 1px),
+    radial-gradient(circle at 18% 42%,rgba(95,216,255,.17),transparent 36%),
+    radial-gradient(circle at 74% 34%,rgba(227,25,55,.12),transparent 30%),
+    rgba(3,8,18,.52);
+  background-size:72px 72px,72px 72px,auto,auto,auto;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 24px 90px rgba(0,0,0,.28);
+}
+
+.speed-stage:before,
+.speed-stage:after{
+  content:"";
+  position:absolute;
+  inset:18px;
+  border:1px solid rgba(95,216,255,.08);
+  border-radius:22px;
+  pointer-events:none;
+}
+
+.speed-stage:after{
+  inset:auto 24px 24px 24px;
+  height:1px;
+  border:none;
+  background:linear-gradient(90deg,transparent,rgba(95,216,255,.5),transparent);
+}
+
+.speed-grid{
+  min-height:0;
+  position:relative;
+  z-index:1;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(260px,340px);
+  gap:22px;
+  align-items:center;
+}
+
+.speed-primary{
+  min-width:0;
+}
+
+.data-label{
+  color:var(--cyan);
+  font-size:12px;
   font-weight:800;
 }
 
-.speed-card-head p,
-.metrics-head p{
-  margin-top:8px;
-  font-size:13px;
-  line-height:1.6;
-  color:var(--muted);
+.speed-number-row{
+  display:flex;
+  align-items:flex-end;
+  gap:18px;
+  margin-top:18px;
 }
 
-.speed-card-head p{
-  margin-top:6px;
-  font-size:12px;
+.speed-value{
+  min-width:0;
+  font-variant-numeric:tabular-nums;
+  font-size:clamp(118px,20vw,260px);
+  line-height:.76;
+  letter-spacing:0;
+  font-weight:900;
+  color:var(--text);
+  text-shadow:0 0 34px rgba(95,216,255,.28),0 0 7px rgba(255,255,255,.16);
+}
+
+.speed-value.is-stale{
+  color:#d8e5f6;
+  text-shadow:0 0 20px rgba(245,158,11,.24);
+}
+
+.speed-value.is-empty{
+  font-size:clamp(58px,8vw,118px);
+  line-height:.95;
+  color:#c9d7ea;
+  text-shadow:0 0 18px rgba(95,216,255,.22);
+}
+
+.speed-unit{
+  padding-bottom:clamp(16px,3.3vw,38px);
+  color:var(--muted-strong);
+  font-size:clamp(18px,2.2vw,34px);
+  line-height:1;
+  font-weight:800;
+}
+
+.speed-meta{
+  margin-top:20px;
+  color:var(--muted-strong);
+  font-size:clamp(14px,1.35vw,18px);
   line-height:1.45;
 }
 
-.hardware-pill{
-  flex:0 0 auto;
-  min-width:100px;
-  text-align:center;
-  padding:10px 14px;
-  border-radius:999px;
-  background:rgba(95,216,255,.12);
-  border:1px solid rgba(95,216,255,.22);
-  color:var(--cyan);
-  font-size:12px;
-  font-weight:700;
-}
-
-.speed-hero{
+.side-telemetry{
   display:grid;
-  grid-template-columns:1fr;
   gap:10px;
 }
 
-.speed-quick{
+.telemetry-item{
   min-width:0;
-  padding:16px 18px 18px;
-  border-radius:22px;
-  background:
-    linear-gradient(135deg,rgba(227,25,55,.18),transparent 42%),
-    radial-gradient(circle at 88% 12%,rgba(95,216,255,.16),transparent 32%),
-    linear-gradient(180deg,rgba(18,29,51,.96) 0%,rgba(10,16,30,.96) 100%);
-  border:1px solid rgba(227,25,55,.2);
+  border:none;
+  border-left:2px solid rgba(95,216,255,.34);
+  border-radius:0;
+  background:linear-gradient(90deg,rgba(95,216,255,.08) 0%,transparent 78%);
+  padding:13px 0 13px 16px;
 }
 
-.speed-live-card{
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+.run-item{
+  min-width:0;
+  border:none;
+  border-top:1px solid rgba(125,211,252,.18);
+  border-radius:0;
+  background:linear-gradient(180deg,rgba(95,216,255,.055) 0%,transparent 72%);
+  padding:12px 0 0;
 }
 
-.speed-quick-label{
-  font-size:12px;
+.telemetry-item span,
+.run-item span{
+  display:block;
   color:var(--muted);
-  letter-spacing:1.2px;
-}
-
-.speed-quick-stack{
-  display:flex;
-  align-items:flex-end;
-  gap:10px;
-}
-
-.speed-quick-value{
-  margin-top:8px;
-  font-size:clamp(68px,8vw,94px);
-  line-height:.86;
+  font-size:10px;
   font-weight:800;
-  letter-spacing:-2.8px;
 }
 
-.speed-quick-unit{
-  padding-bottom:10px;
-  font-size:18px;
+.telemetry-item strong{
+  display:block;
+  margin-top:9px;
+  color:var(--text);
+  font-size:clamp(26px,3.4vw,42px);
   line-height:1;
-  color:var(--muted-strong);
-  font-weight:700;
+  font-weight:900;
+  overflow-wrap:anywhere;
 }
 
-.speed-quick-note{
-  margin-top:10px;
-  font-size:13px;
-  color:var(--muted-strong);
+.telemetry-item small{
+  display:block;
+  margin-top:8px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.35;
 }
 
-.speed-chart-card{
-  min-width:0;
-  padding:12px 14px 14px;
-  border-radius:22px;
-  background:linear-gradient(180deg,rgba(11,19,35,.94) 0%,rgba(7,13,24,.98) 100%);
-  border:1px solid rgba(95,216,255,.16);
+.telemetry-item.offset strong,
+.telemetry-item.modified strong{
+  color:var(--green);
 }
 
-.speed-chart-head{
+.telemetry-item.limit strong{
+  color:var(--cyan);
+}
+
+.curve-panel{
+  min-height:0;
+  position:relative;
+  z-index:1;
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr) auto auto;
+  gap:8px;
+}
+
+.curve-head,
+.curve-meta{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:10px;
-  font-size:12px;
+  gap:12px;
   color:var(--muted);
+  font-size:12px;
+  font-weight:700;
 }
 
 .speed-chart-wrap{
+  min-height:0;
   position:relative;
-  margin-top:10px;
 }
 
 .speed-chart{
   display:block;
   width:100%;
-  height:128px;
+  height:100%;
+  min-height:150px;
 }
 
 .speed-chart-grid{
-  stroke:rgba(125,211,252,.12);
+  stroke:rgba(125,211,252,.13);
   stroke-width:1;
-  stroke-dasharray:5 7;
+  stroke-dasharray:5 8;
 }
 
 .speed-chart-area{
-  fill:rgba(95,216,255,.14);
+  fill:rgba(95,216,255,.15);
 }
 
 .speed-chart-line{
@@ -380,7 +543,7 @@ h1{
   stroke-width:3;
   stroke-linecap:round;
   stroke-linejoin:round;
-  filter:drop-shadow(0 0 10px rgba(95,216,255,.32));
+  filter:drop-shadow(0 0 11px rgba(95,216,255,.42));
 }
 
 .speed-chart-dot{
@@ -396,11 +559,10 @@ h1{
   display:flex;
   align-items:center;
   justify-content:center;
-  border-radius:16px;
-  color:var(--muted);
-  font-size:12px;
-  background:linear-gradient(180deg,rgba(4,10,20,.18) 0%,rgba(4,10,20,.58) 100%);
   border:1px dashed rgba(125,211,252,.14);
+  border-radius:18px;
+  color:var(--muted);
+  background:rgba(2,6,13,.42);
   opacity:0;
   pointer-events:none;
   transition:opacity .2s ease;
@@ -410,135 +572,70 @@ h1{
   opacity:1;
 }
 
-.speed-chart-meta{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-top:8px;
+.curve-meta{
+  color:var(--muted-strong);
+}
+
+.curve-subline{
+  min-height:18px;
+  color:var(--muted);
   font-size:12px;
-  color:var(--muted);
-}
-
-.hero-controls{
-  padding:12px;
-  border-radius:22px;
-  background:var(--panel-soft);
-  border:1px solid rgba(125,211,252,.12);
-}
-
-.speed-readonly-grid{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:10px;
-}
-
-.speed-info-tile{
-  min-width:0;
-  padding:12px 14px;
-  border-radius:16px;
-  background:rgba(19,33,58,.74);
-  border:1px solid rgba(125,211,252,.1);
-}
-
-.speed-info-wide{
-  grid-column:2 / span 2;
-}
-
-.speed-info-label{
-  display:block;
-  font-size:11px;
   line-height:1.4;
-  color:var(--muted);
+  text-align:center;
 }
 
 .speed-info-value{
-  display:block;
-  margin-top:6px;
-  font-size:22px;
-  line-height:1.2;
-  font-weight:800;
   color:var(--text);
+  font-weight:900;
 }
 
-.speed-info-meta{
-  font-size:14px;
-  line-height:1.5;
-  font-weight:700;
-  color:var(--muted-strong);
-}
-
-.speed-info-sub{
-  display:block;
-  margin-top:8px;
-  font-size:12px;
-  line-height:1.45;
-  color:var(--muted-strong);
-}
-
-@media (max-width:720px){
-  .speed-readonly-grid{
-    grid-template-columns:1fr;
-  }
-
-  .speed-info-wide{
-    grid-column:auto;
-  }
-}
-
-.speed-card .row{
-  padding:10px 0;
-}
-
-.speed-card .field{
-  padding:10px 0 0;
-}
-
-.speed-offset-panel{
+.run-strip{
   display:grid;
+  grid-template-columns:minmax(120px,.6fr) minmax(150px,.7fr) minmax(0,1.7fr);
   gap:10px;
 }
 
-.offset-grid{
-  display:grid;
-  grid-template-columns:repeat(6,minmax(0,1fr));
-  gap:6px;
+.run-item{
+  min-height:70px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  gap:8px;
 }
 
-.offset-chip{
-  min-height:40px;
-  border-radius:12px;
-  border:1px solid rgba(125,211,252,.12);
-  background:rgba(19,33,58,.9);
+.run-item strong{
+  min-width:0;
+  color:var(--text);
+  font-size:18px;
+  line-height:1.25;
+  font-weight:900;
+  overflow-wrap:anywhere;
+}
+
+.run-item.policy strong{
   color:var(--muted-strong);
-  font-size:14px;
-  font-weight:700;
-  cursor:pointer;
-  transition:transform .18s ease,border-color .18s ease,background .18s ease,color .18s ease,box-shadow .18s ease;
+  font-size:13px;
+  line-height:1.35;
 }
 
-.offset-chip:hover:not(:disabled),
-.offset-chip:focus-visible{
-  border-color:rgba(95,216,255,.34);
-  transform:translateY(-1px);
+.status-text{
+  overflow-wrap:anywhere;
 }
 
-.offset-chip:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px rgba(95,216,255,.18);
-}
+.status-wide{max-width:none}
+.status-ok{color:var(--green) !important}
+.status-err{color:var(--red) !important}
+.status-warn{color:var(--amber) !important}
+.status-yes{color:var(--green) !important}
+.status-no{color:#8195b1 !important}
+.green{color:var(--green)}
+.amber{color:var(--amber)}
 
-.offset-chip.active{
-  background:linear-gradient(180deg,rgba(227,25,55,.88) 0%,rgba(162,14,37,.96) 100%);
-  border-color:rgba(255,123,146,.48);
-  color:#fff;
-  box-shadow:0 14px 28px rgba(104,9,28,.26);
-}
-
-.offset-chip:disabled{
-  opacity:.42;
-  cursor:not-allowed;
-  transform:none;
+.metric-value{
+  color:var(--text);
+  font-size:inherit;
+  line-height:inherit;
+  font-weight:900;
 }
 
 .row,
@@ -561,10 +658,11 @@ h1{
 }
 
 .row-label{
-  font-size:14px;
-  font-weight:600;
   min-width:0;
   flex:1;
+  color:var(--text);
+  font-size:14px;
+  font-weight:650;
 }
 
 .toggle{
@@ -583,8 +681,8 @@ h1{
 .slider{
   position:absolute;
   inset:0;
-  background:#30415e;
   border-radius:999px;
+  background:#30415e;
   cursor:pointer;
   transition:background .2s ease;
 }
@@ -625,30 +723,17 @@ input:disabled+.slider{
 .field-label{
   display:block;
   margin-bottom:8px;
+  color:var(--muted);
   font-size:11px;
-  color:var(--muted);
-}
-
-.hero-field{
-  padding-bottom:4px;
-}
-
-.hint{
-  font-size:12px;
-  line-height:1.55;
-  color:var(--muted);
-}
-
-.hero-hint{
-  margin-top:8px;
+  font-weight:800;
 }
 
 select,
 .text-input,
 .picker-trigger{
   width:100%;
+  border:1px solid rgba(125,211,252,.16);
   border-radius:14px;
-  border:1px solid rgba(125,211,252,.14);
   background:#13213a;
   color:var(--text);
   padding:12px 14px;
@@ -681,7 +766,7 @@ select,
   gap:12px;
   text-align:left;
   cursor:pointer;
-  transition:transform .2s ease,border-color .2s ease,background .2s ease;
+  transition:background .2s ease,border-color .2s ease,transform .2s ease;
 }
 
 .picker-trigger:after{
@@ -692,6 +777,11 @@ select,
   border-right:5px solid transparent;
   border-top:6px solid var(--muted);
   flex:0 0 auto;
+}
+
+.picker-trigger:hover:not(:disabled){
+  border-color:var(--line-strong);
+  transform:translateY(-1px);
 }
 
 .picker-trigger:disabled,
@@ -710,9 +800,9 @@ select,
   border-radius:14px;
   padding:11px 14px;
   font-size:14px;
-  font-weight:700;
+  font-weight:800;
   cursor:pointer;
-  transition:transform .2s ease,border-color .2s ease,background .2s ease;
+  transition:background .2s ease,border-color .2s ease,transform .2s ease;
 }
 
 .ghost-btn.small-btn{
@@ -731,8 +821,17 @@ select,
 .save-btn,
 .upload-btn{
   border:none;
-  background:linear-gradient(180deg,var(--accent-strong) 0%,var(--accent) 100%);
+  background:linear-gradient(180deg,#ff4d67 0%,var(--tesla) 100%);
   color:#fff;
+}
+
+.secondary-btn:hover:not(:disabled),
+.save-btn:hover:not(:disabled),
+.upload-btn:hover:not(:disabled),
+.ghost-btn:hover:not(:disabled),
+.file-btn:hover{
+  transform:translateY(-1px);
+  border-color:var(--line-strong);
 }
 
 .actions{
@@ -745,170 +844,18 @@ select,
   flex:1;
 }
 
-.metrics-card{
-  display:grid;
-  grid-template-rows:auto minmax(0,1fr);
-  gap:14px;
-}
-
-.metrics-head{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:12px;
-}
-
-.metrics-grid{
-  min-height:0;
-  display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:10px;
-  align-content:start;
-}
-
-.metric-panel{
-  min-height:112px;
-  padding:14px;
-  border-radius:20px;
-  background:var(--panel-soft);
-  border:1px solid rgba(125,211,252,.12);
-  display:flex;
-  flex-direction:column;
-  justify-content:space-between;
-  gap:10px;
-}
-
-.metric-panel.primary{
-  background:
-    linear-gradient(180deg,rgba(95,216,255,.08) 0%,transparent 34%),
-    linear-gradient(180deg,rgba(19,30,52,.94) 0%,rgba(12,18,33,.94) 100%);
-}
-
-.metric-panel.wide{
-  grid-column:span 2;
-  min-height:96px;
-}
-
-.metric-label{
-  font-size:10px;
+.hint{
+  margin-top:8px;
   color:var(--muted);
-}
-
-.metric-value{
-  font-size:clamp(28px,3.4vw,40px);
-  line-height:1;
-  font-weight:800;
-  letter-spacing:-1px;
-}
-
-.metric-time{
-  font-size:clamp(22px,2.8vw,32px);
-  letter-spacing:-.3px;
-}
-
-.metric-meta{
   font-size:12px;
-  line-height:1.45;
-  color:var(--muted);
+  line-height:1.55;
 }
-
-.green{color:var(--green)}
-.amber{color:var(--amber)}
-
-.metric-panel .status-text{
-  max-width:none;
-  text-align:left;
-  word-break:break-word;
-  font-size:22px;
-  line-height:1.22;
-  font-weight:800;
-}
-
-.metric-panel .status-wide{
-  font-size:16px;
-  font-weight:700;
-}
-
-.hero-mini-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:10px;
-}
-
-.mini-stat{
-  padding:14px;
-  border-radius:18px;
-  background:rgba(19,33,58,.72);
-  border:1px solid rgba(125,211,252,.1);
-}
-
-.mini-stat-label{
-  display:block;
-  font-size:10px;
-  color:var(--muted);
-  margin-bottom:8px;
-}
-
-.mini-stat .status-text{
-  max-width:none;
-  text-align:left;
-  font-size:16px;
-  line-height:1.35;
-}
-
-.live-strip{
-  grid-column:1 / -1;
-  display:grid;
-  grid-template-columns:repeat(8,minmax(0,1fr));
-  gap:10px;
-}
-
-.live-item{
-  min-height:84px;
-  border-radius:20px;
-  padding:12px 14px;
-  display:flex;
-  flex-direction:column;
-  justify-content:space-between;
-  gap:8px;
-}
-
-.live-label{
-  font-size:10px;
-  color:var(--muted);
-}
-
-.status-text{
-  max-width:65%;
-  text-align:right;
-  word-break:break-word;
-  font-size:14px;
-  font-weight:700;
-}
-
-.live-item .status-text{
-  max-width:none;
-  text-align:left;
-  font-size:15px;
-  line-height:1.35;
-}
-
-.live-item.compact .status-text{
-  font-size:22px;
-  line-height:1;
-}
-
-.status-wide{max-width:none}
-.status-ok{color:var(--green)}
-.status-err{color:var(--red)}
-.status-warn{color:var(--amber)}
-.status-yes{color:var(--green)}
-.status-no{color:#8195b1}
 
 .msg{
   min-height:16px;
   margin-top:8px;
   text-align:left;
+  color:var(--muted);
   font-size:12px;
   line-height:1.5;
   white-space:pre-line;
@@ -946,9 +893,9 @@ select,
   align-items:center;
   justify-content:space-between;
   gap:12px;
+  border:1px solid rgba(125,211,252,.1);
   border-radius:16px;
   background:rgba(18,29,51,.78);
-  border:1px solid rgba(125,211,252,.1);
   padding:12px 14px;
 }
 
@@ -958,8 +905,9 @@ select,
 }
 
 .saved-name{
+  color:var(--text);
   font-size:14px;
-  font-weight:700;
+  font-weight:800;
   word-break:break-word;
 }
 
@@ -990,8 +938,8 @@ select,
   border-radius:16px;
   padding:16px;
   text-align:center;
-  font-size:12px;
   color:var(--muted);
+  font-size:12px;
 }
 
 .ota-row{
@@ -1005,23 +953,23 @@ select,
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  border-radius:14px;
   border:1px solid rgba(125,211,252,.16);
+  border-radius:14px;
   background:rgba(19,33,58,.85);
   color:var(--text);
   padding:10px 14px;
   font-size:13px;
-  font-weight:700;
+  font-weight:800;
   cursor:pointer;
   transition:transform .2s ease,border-color .2s ease;
 }
 
 .file-name{
   min-width:0;
-  font-size:12px;
-  color:var(--muted);
-  word-break:break-word;
   flex:1;
+  color:var(--muted);
+  font-size:12px;
+  word-break:break-word;
 }
 
 .progress{
@@ -1057,10 +1005,17 @@ select,
   display:flex;
 }
 
+.dialog-sheet,
+.picker-sheet{
+  border:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(20,32,54,.96) 0%,rgba(8,14,27,.98) 100%);
+  box-shadow:var(--shadow);
+}
+
 .dialog-sheet{
   width:min(1120px,100%);
   max-height:min(92svh,900px);
-  border-radius:28px;
+  border-radius:26px;
   overflow:hidden;
   display:grid;
   grid-template-rows:auto minmax(0,1fr);
@@ -1081,29 +1036,35 @@ select,
 }
 
 .dialog-title-wrap h3{
+  color:var(--text);
   font-size:24px;
-  font-weight:800;
+  font-weight:900;
 }
 
 .dialog-title-wrap p{
   margin-top:8px;
+  color:var(--muted);
   font-size:13px;
   line-height:1.6;
-  color:var(--muted);
 }
 
 .dialog-close{
-  border:none;
-  background:rgba(19,33,58,.9);
-  color:var(--muted);
   width:40px;
   height:40px;
+  border:1px solid rgba(125,211,252,.14);
   border-radius:12px;
+  background:rgba(19,33,58,.9);
+  color:var(--muted);
   font-size:24px;
   line-height:1;
   cursor:pointer;
-  transition:border-color .2s ease,transform .2s ease,background .2s ease;
-  border:1px solid rgba(125,211,252,.14);
+  transition:background .2s ease,border-color .2s ease,transform .2s ease;
+}
+
+.dialog-close:hover,
+.dialog-close:focus-visible{
+  border-color:var(--line-strong);
+  color:var(--cyan);
 }
 
 .dialog-body{
@@ -1120,20 +1081,39 @@ select,
 }
 
 .dialog-card{
-  border-radius:22px;
+  border:1px solid rgba(125,211,252,.1);
+  border-radius:20px;
   padding:18px;
   background:rgba(18,29,51,.74);
-  border:1px solid rgba(125,211,252,.1);
 }
 
 .dialog-card.full{
   grid-column:1 / -1;
 }
 
+.card-title{
+  margin-bottom:10px;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:800;
+}
+
 .status-grid{
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));
   gap:0 16px;
+}
+
+.status-row span:first-child{
+  color:var(--muted);
+  font-size:13px;
+}
+
+.status-row .status-text{
+  max-width:60%;
+  text-align:right;
+  font-size:14px;
+  font-weight:800;
 }
 
 .picker-modal{
@@ -1168,8 +1148,9 @@ select,
 }
 
 .picker-title{
+  color:var(--text);
   font-size:15px;
-  font-weight:700;
+  font-weight:800;
 }
 
 .picker-close{
@@ -1226,437 +1207,215 @@ select,
   background:currentColor;
 }
 
-@media (max-width:1240px){
-  html,
+@media (max-width:980px){
   body{
-    height:auto;
-  }
-  body{padding:10px}
-  body{
-    min-height:100svh;
     overflow-x:hidden;
     overflow-y:auto;
   }
+
   .page{
     height:auto;
-    min-height:calc(100svh - 20px);
+    min-height:calc(100svh - 28px);
   }
+
   .app-shell{
     grid-template-rows:auto;
-    align-content:start;
-    gap:12px;
   }
-  .topbar{
-    gap:10px;
-  }
-  .brand-block{
-    padding:16px 18px;
-  }
-  .toolbar{
-    width:min(800px,100%);
-  }
-  .toolbar-btn{
-    min-height:92px;
-    padding:13px 14px 14px;
-    gap:8px;
-    justify-content:flex-start;
-  }
-  .toolbar-label{
-    font-size:14px;
-  }
-  .toolbar-meta{
-    display:-webkit-box;
-    min-height:2.8em;
-    -webkit-box-orient:vertical;
-    -webkit-line-clamp:2;
-    overflow:hidden;
-  }
-  .dashboard-main{
-    grid-template-columns:minmax(332px,.88fr) minmax(0,1.12fr);
-    grid-template-rows:auto auto;
-    gap:12px;
-  }
-  .speed-card{
-    gap:12px;
-  }
-  .speed-card-head{
-    align-items:center;
-  }
-  .speed-hero{
-    grid-template-columns:minmax(184px,.82fr) minmax(0,1.18fr);
-    align-items:stretch;
-  }
-  .speed-live-card{
-    padding:14px 14px 16px;
-  }
-  .speed-quick-value{
-    font-size:clamp(54px,6.2vw,78px);
-  }
-  .speed-quick-unit{
-    padding-bottom:8px;
-    font-size:16px;
-  }
-  .speed-chart-card{
-    padding:12px 12px 12px;
-  }
-  .speed-chart{
-    height:112px;
-  }
-  .hero-controls{
-    padding:10px;
-  }
-  .speed-info-tile{
-    padding:10px 12px;
-  }
-  .speed-info-value{
-    font-size:19px;
-  }
-  .speed-info-meta{
-    font-size:13px;
-    line-height:1.38;
-  }
-  .speed-info-sub{
-    margin-top:6px;
-    font-size:11px;
-    line-height:1.4;
-  }
-  .metrics-card{
-    gap:12px;
-  }
-  .metrics-grid{
-    height:100%;
-    grid-template-columns:repeat(3,minmax(0,1fr));
-    grid-auto-rows:minmax(108px,1fr);
-    align-content:stretch;
-  }
-  .metric-panel,
-  .metric-panel.wide{
-    min-height:0;
-    height:100%;
-    padding:13px 14px;
-  }
-  .metric-panel.wide{
-    grid-column:auto;
-  }
-  .metric-panel.metric-temp{
-    grid-column:span 2;
-  }
-  .metric-value{
-    font-size:clamp(26px,3vw,34px);
-  }
-  .metric-panel .status-text{
-    font-size:20px;
-  }
-  .metric-panel .status-wide{
-    font-size:15px;
-  }
-  .live-strip{
-    grid-template-columns:repeat(4,minmax(0,1fr));
-  }
-}
 
-@media (max-width:980px){
-  .topbar{
-    flex-direction:column;
+  .speed-stage{
+    grid-template-rows:auto auto;
+    padding:18px;
   }
-  .toolbar{
-    width:100%;
-    grid-template-columns:repeat(4,minmax(0,1fr));
-  }
-  .brand-block,
-  .hero-card,
-  .dialog-card{
-    padding:16px;
-  }
-  .brand-block,
-  .hero-card,
-  .dialog-sheet,
-  .picker-sheet{
-    border-radius:24px;
-  }
-  .dashboard-main{
-    grid-template-columns:minmax(252px,.88fr) minmax(0,1.12fr);
-  }
-  .speed-hero{
+
+  .speed-grid{
     grid-template-columns:1fr;
+    align-items:start;
+    gap:18px;
   }
-  .speed-readonly-grid{
+
+  .side-telemetry{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+
+  .speed-value{
+    font-size:clamp(92px,27vw,180px);
+  }
+
+  .speed-chart{
+    height:220px;
+  }
+
+  .run-strip{
     grid-template-columns:repeat(2,minmax(0,1fr));
   }
-  .speed-info-wide{
+
+  .run-item.policy{
     grid-column:1 / -1;
   }
-  .metrics-head{
+}
+
+@media (max-width:720px){
+  body{
+    padding:10px;
+  }
+
+  .page{
+    min-height:calc(100svh - 20px);
+  }
+
+  .hud-topbar{
     align-items:flex-start;
   }
-  .metrics-grid{
-    height:auto;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    grid-template-areas:none;
-    grid-auto-rows:minmax(102px,auto);
-  }
-  .metric-panel{
-    min-height:102px;
-  }
-  .metric-panel.wide{
-    grid-column:span 2;
-    min-height:90px;
-  }
-  .live-item{
-    min-height:78px;
-  }
-  .offset-grid{
-    grid-template-columns:repeat(5,minmax(0,1fr));
-  }
-}
 
-@media (max-width:760px){
-  .brand-kicker,
-  .section-tag,
-  .metric-label,
-  .live-label,
-  .mini-stat-label,
-  .field-label{
-    letter-spacing:1.2px;
+  .hud-identity{
+    flex-wrap:wrap;
+    padding-top:6px;
   }
-  h1{
-    font-size:clamp(26px,5.4vw,34px);
-  }
-  .page-subtitle,
-  .speed-card-head p,
-  .metrics-head p{
+
+  .hud-divider{
     display:none;
   }
-  .dashboard-main{
-    grid-template-columns:1fr;
+
+  .speed-stage{
+    border-radius:22px;
+    padding:14px;
   }
-  .speed-card-head h2,
-  .metrics-head h2{
-    font-size:clamp(24px,4.6vw,30px);
+
+  .speed-stage:before{
+    inset:12px;
+    border-radius:18px;
   }
-  .speed-quick{
-    padding:14px 14px 16px;
+
+  .speed-number-row{
+    gap:10px;
+    margin-top:14px;
   }
-  .speed-quick-value{
-    font-size:clamp(56px,8vw,72px);
+
+  .speed-value{
+    font-size:clamp(72px,26vw,130px);
   }
-  .speed-quick-unit{
-    padding-bottom:8px;
-    font-size:16px;
-  }
-  .metric-value{
-    font-size:clamp(24px,4.8vw,32px);
-  }
-  .metric-time{
-    font-size:clamp(20px,4vw,28px);
-  }
-  .metric-panel .status-text{
+
+  .speed-unit{
+    padding-bottom:14px;
     font-size:18px;
   }
-  .metric-panel .status-wide{
-    font-size:14px;
-  }
-  .status-text{
-    max-width:none;
-  }
-}
 
-/* Phone-sized H5 viewports switch to a readable scroll layout instead of clipping content. */
-@media (max-width:640px), (max-width:920px) and (max-height:720px){
-  html,
-  body{
-    height:auto;
+  .speed-meta{
+    margin-top:14px;
+    font-size:13px;
   }
-  body{
-    min-height:100svh;
-    overflow-x:hidden;
-    overflow-y:auto;
-    padding:8px;
-  }
-  .page{
-    width:100%;
-    height:auto;
-    min-height:calc(100svh - 16px);
-  }
-  .app-shell{
-    grid-template-rows:auto;
-    align-content:start;
-    gap:12px;
-  }
-  .topbar{
-    flex-direction:column;
-    gap:10px;
-  }
-  .toolbar{
-    width:100%;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:8px;
-  }
-  .toolbar-btn{
-    min-height:92px;
-  }
-  .toolbar-meta{
-    white-space:normal;
-  }
-  .dashboard-main{
-    grid-template-columns:1fr;
-    grid-template-rows:none;
-    gap:12px;
-  }
-  .metrics-grid,
-  .live-strip,
+
+  .side-telemetry,
+  .run-strip,
+  .diagnostics-grid,
   .dialog-grid,
   .status-grid{
-    grid-template-columns:repeat(2,minmax(0,1fr));
+    grid-template-columns:1fr;
   }
-  .metric-panel.wide{
-    grid-column:span 2;
+
+  .telemetry-item{
+    padding:12px 14px;
   }
-  .metric-panel,
-  .live-item,
-  .mini-stat{
-    min-height:auto;
+
+  .telemetry-item strong{
+    font-size:28px;
   }
+
+  .speed-chart{
+    height:176px;
+    min-height:176px;
+  }
+
+  .curve-head,
+  .curve-meta{
+    font-size:11px;
+  }
+
+  .run-item.policy{
+    grid-column:auto;
+  }
+
   .dialog-modal,
   .picker-modal{
     padding:10px;
   }
-  .dialog-sheet,
-  .dialog-sheet.narrow{
-    width:min(920px,100%);
-  }
+
   .dialog-body{
     padding:14px;
   }
-  .page-subtitle,
-  .speed-card-head p,
-  .metrics-head p,
+
   .dialog-title-wrap p{
-    display:block;
     font-size:12px;
     line-height:1.5;
   }
-  .offset-grid{
-    grid-template-columns:repeat(4,minmax(0,1fr));
-  }
-  .offset-chip{
-    min-height:42px;
-    font-size:14px;
-  }
-  .speed-chart{
-    height:116px;
-  }
-  .speed-chart-head,
-  .speed-chart-meta{
-    font-size:11px;
-  }
-}
 
-@media (max-width:420px){
-  .metrics-grid,
-  .live-strip,
-  .dialog-grid,
-  .status-grid{
-    grid-template-columns:1fr;
-  }
-  .metric-panel.wide{
-    grid-column:auto;
-  }
-  .offset-grid{
-    grid-template-columns:repeat(2,minmax(0,1fr));
-  }
-  .speed-quick-value{
-    font-size:clamp(50px,15vw,62px);
-  }
-  .speed-quick-unit{
-    padding-bottom:6px;
-    font-size:14px;
-  }
-  .metric-value{
-    font-size:clamp(22px,10vw,30px);
-  }
-  .metric-panel .status-text{
-    font-size:17px;
-  }
-  .live-item.compact .status-text{
-    font-size:20px;
-  }
-}
-
-@media (max-width:320px){
-  .toolbar{
-    grid-template-columns:1fr;
-  }
   .actions,
   .inline-actions,
   .section-head,
   .saved-item,
-  .dialog-head,
   .ota-row{
+    align-items:stretch;
     flex-direction:column;
-    align-items:flex-start;
-  }
-  .dialog-close{
-    align-self:flex-end;
-  }
-  .offset-grid{
-    grid-template-columns:1fr;
   }
 }
 
-@media (max-height:820px) and (min-width:641px){
-  html,
-  body{
-    height:auto;
+@media (max-width:420px){
+  .hud-actions{
+    gap:6px;
   }
+
+  .icon-btn{
+    width:44px;
+    height:44px;
+    border-radius:14px;
+  }
+
+  .speed-value{
+    font-size:clamp(62px,25vw,98px);
+  }
+
+  .speed-unit{
+    font-size:15px;
+  }
+
+  .settings-menu,
+  .diagnostics-popover{
+    right:-2px;
+  }
+
+  .status-row{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+
+  .status-row .status-text{
+    max-width:none;
+    text-align:left;
+  }
+}
+
+@media (max-height:760px) and (min-width:981px){
   body{
-    min-height:100svh;
     overflow-x:hidden;
     overflow-y:auto;
   }
+
   .page{
     height:auto;
-    min-height:calc(100svh - 18px);
+    min-height:calc(100svh - 28px);
   }
-  .app-shell{
-    grid-template-rows:auto;
-    align-content:start;
-    gap:10px;
-  }
-  .brand-block{padding:16px 20px}
-  .hero-card{padding:16px}
-  .dashboard-main{
+
+  .speed-stage{
     grid-template-rows:auto auto;
   }
-  .speed-card{gap:12px}
-  .speed-hero{
-    grid-template-columns:minmax(200px,.84fr) minmax(0,1.16fr);
+
+  .speed-value{
+    font-size:clamp(98px,16vw,190px);
   }
-  .speed-readonly-grid{
-    grid-template-columns:repeat(3,minmax(0,1fr));
+
+  .speed-chart{
+    height:170px;
   }
-  .speed-info-wide{
-    grid-column:2 / span 2;
-  }
-  .metric-panel{min-height:94px}
-  .metric-panel.wide{min-height:86px}
-  .metrics-grid{
-    height:100%;
-    grid-template-columns:repeat(3,minmax(0,1fr));
-    grid-auto-rows:minmax(92px,1fr);
-    align-content:stretch;
-  }
-  .metric-panel.wide{
-    grid-column:auto;
-  }
-  .metric-panel.metric-temp{
-    grid-column:span 2;
-  }
-  .live-item{min-height:72px}
-  .speed-quick-value{font-size:60px}
-  .speed-card-head p,
-  .metrics-head p,
-  .page-subtitle{font-size:12px}
 }
 
 @media (prefers-reduced-motion:reduce){
@@ -1672,267 +1431,284 @@ select,
   </head>
   <body>
     <div class="page app-shell">
-      <header class="topbar">
-        <div class="brand-block">
-          <div class="brand-kicker">TESLA FSD WIFI CONTROLLER</div>
-          <h1>FSD 控制器</h1>
+      <header class="hud-topbar">
+        <div class="hud-identity">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="hud-name">FSD 控制器</span>
+          <span class="hud-divider"></span>
+          <span id="hwModeBadge">硬件 --</span>
         </div>
-        <div class="toolbar">
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('fsdModal')"
+
+        <div class="hud-actions">
+          <div
+            class="hud-popover-wrap details-wrap"
+            onmouseenter="showDiagnosticsPanel()"
+            onmouseleave="hideDiagnosticsPanelSoon()"
           >
-            <span class="toolbar-label">FSD 设置</span>
-            <span class="toolbar-meta" id="toolbarFsdMeta">硬件 --</span>
-          </button>
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('dnsModal')"
-          >
-            <span class="toolbar-label">白名单过滤</span>
-            <span class="toolbar-meta" id="toolbarDnsMeta">规则 --</span>
-          </button>
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('networkModal')"
-          >
-            <span class="toolbar-label">网络热点</span>
-            <span class="toolbar-meta" id="toolbarNetworkMeta">上游 --</span>
-          </button>
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('otaModal')"
-          >
-            <span class="toolbar-label">固件升级</span>
-            <span class="toolbar-meta">上传 .bin</span>
-          </button>
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label="查看诊断信息"
+              aria-expanded="false"
+              id="diagnosticsToggle"
+              onclick="toggleDiagnosticsPanel(event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path d="M12 10v7"></path>
+                <path d="M12 7h.01"></path>
+              </svg>
+            </button>
+
+            <aside
+              class="diagnostics-popover"
+              id="diagnosticsPanel"
+              onclick="event.stopPropagation()"
+            >
+              <div class="popover-head">
+                <span>诊断信息</span>
+                <button
+                  type="button"
+                  class="mini-close"
+                  aria-label="关闭诊断信息"
+                  onclick="closeDiagnosticsPanel()"
+                >
+                  &times;
+                </button>
+              </div>
+              <div class="diagnostics-grid">
+                <div class="diag-item">
+                  <span>收包变化</span>
+                  <strong id="sRX" class="status-no status-text">--</strong>
+                  <small id="sRXMeta">等待速率采样</small>
+                </div>
+                <div class="diag-item">
+                  <span>CAN 总线</span>
+                  <strong id="sCAN" class="status-no status-text">等待</strong>
+                  <small id="sCANMeta">等待第一帧 CAN</small>
+                </div>
+                <div class="diag-item compact">
+                  <span>错误</span>
+                  <strong id="sErrors" class="amber">0</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>运行时间</span>
+                  <strong id="sUptime">0秒</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>FSD 触发</span>
+                  <strong id="sFSD" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>温控</span>
+                  <strong id="sThermal" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item">
+                  <span>当前热点</span>
+                  <strong
+                    id="sCurrentUpstream"
+                    class="status-no status-text status-wide"
+                    >--</strong
+                  >
+                </div>
+                <div class="diag-item compact">
+                  <span>RSSI</span>
+                  <strong id="sUpstreamRSSI" class="status-no status-text"
+                    >--</strong
+                  >
+                </div>
+                <div class="diag-item compact">
+                  <span>AP 客户端</span>
+                  <strong id="sAPClients" class="status-no status-text">0</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>DNS</span>
+                  <strong
+                    id="sDNSMode"
+                    class="status-no status-text status-wide"
+                    >--</strong
+                  >
+                </div>
+                <div class="diag-item compact">
+                  <span>白名单</span>
+                  <strong id="sDNSCount" class="status-no status-text">0</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>已拦截</span>
+                  <strong id="sDNSBlocked" class="status-no status-text">0</strong>
+                </div>
+                <div class="diag-item">
+                  <span>本地 AP</span>
+                  <strong id="sAP" class="status-ok status-text">--</strong>
+                </div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="hud-popover-wrap">
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label="打开设置"
+              aria-expanded="false"
+              id="settingsToggle"
+              onclick="toggleSettingsMenu(event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"
+                ></path>
+                <path
+                  d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .55l-.08.08a2 2 0 0 1-3.42-1.41v-.08A1.7 1.7 0 0 0 9.5 17a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 5.1 12a1.7 1.7 0 0 0-.55-1l-.08-.08A2 2 0 0 1 5.88 7.5h.08A1.7 1.7 0 0 0 7.5 6.5a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 0 1 9.93 1.74l.06.06A1.7 1.7 0 0 0 12 2.1a1.7 1.7 0 0 0 1-.55l.08-.08A2 2 0 0 1 16.5 2.88v.08A1.7 1.7 0 0 0 17.5 4.5a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 21.9 9a1.7 1.7 0 0 0 .55 1l.08.08a2 2 0 0 1-1.41 3.42h-.08A1.7 1.7 0 0 0 19.4 15Z"
+                ></path>
+              </svg>
+            </button>
+
+            <nav
+              class="settings-menu"
+              id="settingsMenu"
+              onclick="event.stopPropagation()"
+            >
+              <button type="button" onclick="openDashboardDialog('fsdModal')">
+                <span>FSD 设置</span>
+                <small id="toolbarFsdMeta">硬件 --</small>
+              </button>
+              <button type="button" onclick="openDashboardDialog('dnsModal')">
+                <span>白名单过滤</span>
+                <small id="toolbarDnsMeta">规则 --</small>
+              </button>
+              <button
+                type="button"
+                onclick="openDashboardDialog('networkModal')"
+              >
+                <span>网络热点</span>
+                <small id="toolbarNetworkMeta">上游 --</small>
+              </button>
+              <button type="button" onclick="openDashboardDialog('otaModal')">
+                <span>固件升级</span>
+                <small>上传 .bin</small>
+              </button>
+            </nav>
+          </div>
         </div>
       </header>
 
-      <main class="dashboard-main">
-        <section class="hero-card speed-card">
-          <div class="section-tag">实时速度</div>
-          <div class="speed-card-head">
-            <div>
-              <h2>当前车速</h2>
-              <p>上方看实时车速，下方看最近 30 秒变化曲线，并估算纵向加速度。</p>
-            </div>
-            <div class="hardware-pill" id="hwModeBadge">硬件 --</div>
-          </div>
-
-          <div class="speed-hero">
-            <div class="speed-quick speed-live-card">
-              <div class="speed-quick-label">车辆当前速度</div>
-              <div class="speed-quick-stack">
-                <div class="speed-quick-value" id="vehicleSpeedDisplay">--</div>
-                <div class="speed-quick-unit">km/h</div>
-              </div>
-              <div class="speed-quick-note" id="vehicleSpeedMeta">
-                等待 CAN 车速
-              </div>
-            </div>
-
-            <div class="speed-chart-card">
-              <div class="speed-chart-head">
-                <span>最近 30 秒速度变化</span>
-                <span id="vehicleSpeedTrendMeta">波动 --</span>
-              </div>
-              <div class="speed-chart-wrap">
-                <svg
-                  class="speed-chart"
-                  viewBox="0 0 320 128"
-                  preserveAspectRatio="none"
-                  aria-hidden="true"
-                >
-                  <line
-                    class="speed-chart-grid"
-                    x1="0"
-                    y1="20"
-                    x2="320"
-                    y2="20"
-                  ></line>
-                  <line
-                    class="speed-chart-grid"
-                    x1="0"
-                    y1="64"
-                    x2="320"
-                    y2="64"
-                  ></line>
-                  <line
-                    class="speed-chart-grid"
-                    x1="0"
-                    y1="108"
-                    x2="320"
-                    y2="108"
-                  ></line>
-                  <path
-                    id="vehicleSpeedChartArea"
-                    class="speed-chart-area"
-                    d=""
-                  ></path>
-                  <polyline
-                    id="vehicleSpeedChartLine"
-                    class="speed-chart-line"
-                    points=""
-                  ></polyline>
-                  <circle
-                    id="vehicleSpeedChartDot"
-                    class="speed-chart-dot"
-                    cx="0"
-                    cy="0"
-                    r="4"
-                  ></circle>
-                </svg>
-                <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
-                  等待最近车速样本
+      <main class="hud-main">
+        <section class="speed-stage" aria-label="实时车速">
+          <div class="speed-grid">
+            <div class="speed-primary">
+              <div class="data-label">车辆当前速度</div>
+              <div class="speed-number-row">
+                <div class="speed-value is-empty" id="vehicleSpeedDisplay">
+                  等待
                 </div>
+                <div class="speed-unit">km/h</div>
               </div>
-              <div class="speed-chart-meta">
-                <span id="vehicleSpeedChartMin">最低 --</span>
-                <span>最近 30 秒</span>
-                <span id="vehicleSpeedChartMax">最高 --</span>
+              <div class="speed-meta" id="vehicleSpeedMeta">等待 CAN 车速</div>
+            </div>
+
+            <div class="side-telemetry">
+              <div class="telemetry-item limit">
+                <span>识别限速</span>
+                <strong id="detectedSpeedLimitDisplay">--</strong>
+                <small id="detectedSpeedSourceDisplay">--</small>
+              </div>
+              <div class="telemetry-item offset">
+                <span>当前增量</span>
+                <strong id="speedOffsetDisplay">+0 km/h</strong>
+                <small id="speedOffsetState">读取中</small>
+              </div>
+              <div class="telemetry-item modified">
+                <span>改包变化</span>
+                <strong id="sModified" class="status-no">--</strong>
+                <small id="sModifiedMeta">等待速率采样</small>
               </div>
             </div>
           </div>
 
-          <div class="hero-controls">
-            <div class="speed-readonly-grid">
-              <article class="speed-info-tile">
-                <span class="speed-info-label">纵向加速度</span>
-                <strong class="speed-info-value" id="vehicleAccelerationDisplay"
-                  >--</strong
-                >
-                <span class="speed-info-sub" id="vehicleAccelerationMeta"
-                  >按最近速度变化估算</span
-                >
-              </article>
-              <article class="speed-info-tile">
-                <span class="speed-info-label">当前增量</span>
-                <strong class="speed-info-value" id="speedOffsetDisplay"
-                  >+0 km/h</strong
-                >
-                <span class="speed-info-sub" id="speedOffsetState">读取中</span>
-              </article>
-              <article class="speed-info-tile">
-                <span class="speed-info-label">识别限速</span>
-                <strong class="speed-info-value" id="detectedSpeedLimitDisplay"
-                  >--</strong
-                >
-              </article>
-              <article class="speed-info-tile">
-                <span class="speed-info-label">限速来源</span>
-                <strong
-                  class="speed-info-value speed-info-meta"
-                  id="detectedSpeedSourceDisplay"
-                  >--</strong
-                >
-              </article>
-              <article class="speed-info-tile speed-info-wide">
-                <span class="speed-info-label">自动策略</span>
-                <strong
-                  class="speed-info-value speed-info-meta"
-                  id="speedPolicySummary"
-                  >低速更积极，高速 100+ 不超过 10%</strong
-                >
-              </article>
+          <div class="curve-panel">
+            <div class="curve-head">
+              <span>最近 30 秒速度变化</span>
+              <span id="vehicleSpeedTrendMeta">波动 --</span>
+            </div>
+            <div class="speed-chart-wrap">
+              <svg
+                class="speed-chart"
+                viewBox="0 0 320 128"
+                preserveAspectRatio="none"
+                aria-label="最近 30 秒速度变化曲线"
+                role="img"
+              >
+                <line
+                  class="speed-chart-grid"
+                  x1="0"
+                  y1="20"
+                  x2="320"
+                  y2="20"
+                ></line>
+                <line
+                  class="speed-chart-grid"
+                  x1="0"
+                  y1="64"
+                  x2="320"
+                  y2="64"
+                ></line>
+                <line
+                  class="speed-chart-grid"
+                  x1="0"
+                  y1="108"
+                  x2="320"
+                  y2="108"
+                ></line>
+                <path
+                  id="vehicleSpeedChartArea"
+                  class="speed-chart-area"
+                  d=""
+                ></path>
+                <polyline
+                  id="vehicleSpeedChartLine"
+                  class="speed-chart-line"
+                  points=""
+                ></polyline>
+                <circle
+                  id="vehicleSpeedChartDot"
+                  class="speed-chart-dot"
+                  cx="0"
+                  cy="0"
+                  r="4"
+                ></circle>
+              </svg>
+              <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
+                等待最近车速样本
+              </div>
+            </div>
+            <div class="curve-meta">
+              <span id="vehicleSpeedChartMin">最低 --</span>
+              <span id="vehicleAccelerationDisplay">--</span>
+              <span id="vehicleSpeedChartMax">最高 --</span>
+            </div>
+            <div class="curve-subline" id="vehicleAccelerationMeta">
+              按最近速度变化估算
             </div>
           </div>
         </section>
 
-        <section class="hero-card metrics-card">
-          <div class="metrics-head">
-            <div>
-              <div class="section-tag">实时指标</div>
-              <h2>核心数据</h2>
-            </div>
-            <p>主要状态保持在首屏，一眼确认设备是否正常工作。</p>
+        <section class="run-strip" aria-label="运行摘要">
+          <div class="run-item">
+            <span>热点</span>
+            <strong id="sUpstream" class="status-no status-text">--</strong>
           </div>
-
-          <div class="metrics-grid">
-            <article class="metric-panel primary metric-modified">
-              <span class="metric-label">改包变化</span>
-              <strong class="metric-value status-no" id="sModified">--</strong>
-              <span class="metric-meta" id="sModifiedMeta">等待速率采样</span>
-            </article>
-            <article class="metric-panel primary metric-rx">
-              <span class="metric-label">收包变化</span>
-              <strong class="metric-value status-no" id="sRX">--</strong>
-              <span class="metric-meta" id="sRXMeta">等待速率采样</span>
-            </article>
-            <article class="metric-panel primary metric-errors">
-              <span class="metric-label">错误</span>
-              <strong class="metric-value amber" id="sErrors">0</strong>
-            </article>
-            <article class="metric-panel primary metric-uptime">
-              <span class="metric-label">运行时间</span>
-              <strong class="metric-value metric-time" id="sUptime">0秒</strong>
-            </article>
-            <article class="metric-panel metric-can">
-              <span class="metric-label">CAN 总线</span>
-              <strong id="sCAN" class="status-no status-text">等待</strong>
-              <span class="metric-meta" id="sCANMeta">等待第一帧 CAN</span>
-            </article>
-            <article class="metric-panel metric-fsd">
-              <span class="metric-label">FSD 触发</span>
-              <strong id="sFSD" class="status-no status-text">--</strong>
-            </article>
-            <article class="metric-panel wide metric-temp">
-              <span class="metric-label">芯片温度</span>
-              <strong id="sChipTemp" class="status-no status-text status-wide"
-                >--</strong
-              >
-            </article>
-            <article class="metric-panel wide metric-thermal">
-              <span class="metric-label">温控状态</span>
-              <strong id="sThermal" class="status-no status-text status-wide"
-                >--</strong
-              >
-            </article>
-          </div>
-        </section>
-
-        <section class="live-strip">
-          <div class="live-item">
-            <span class="live-label">上游状态</span>
-            <span id="sUpstream" class="status-no status-text">--</span>
-          </div>
-          <div class="live-item">
-            <span class="live-label">当前热点</span>
-            <span
-              id="sCurrentUpstream"
-              class="status-no status-text status-wide"
-              >--</span
+          <div class="run-item">
+            <span>芯片温度</span>
+            <strong id="sChipTemp" class="status-no status-text status-wide"
+              >--</strong
             >
           </div>
-          <div class="live-item">
-            <span class="live-label">上游 RSSI</span>
-            <span id="sUpstreamRSSI" class="status-no status-text">--</span>
-          </div>
-          <div class="live-item compact">
-            <span class="live-label">AP 客户端</span>
-            <span id="sAPClients" class="status-no status-text">0</span>
-          </div>
-          <div class="live-item">
-            <span class="live-label">DNS 状态</span>
-            <span id="sDNSMode" class="status-no status-text status-wide"
-              >--</span
+          <div class="run-item policy">
+            <span>策略</span>
+            <strong id="speedPolicySummary"
+              >低速更积极，高速 100+ 不超过 10%</strong
             >
-          </div>
-          <div class="live-item compact">
-            <span class="live-label">白名单</span>
-            <span id="sDNSCount" class="status-no status-text">0</span>
-          </div>
-          <div class="live-item compact">
-            <span class="live-label">已拦截</span>
-            <span id="sDNSBlocked" class="status-no status-text">0</span>
-          </div>
-          <div class="live-item">
-            <span class="live-label">本地 AP</span>
-            <span id="sAP" class="status-ok status-text">--</span>
           </div>
         </section>
       </main>
@@ -2411,6 +2187,9 @@ let lastCanCounters=null;
 let activePickerId='';
 let vehicleSpeedHistory=[];
 let lastVehicleSpeedUptimeMs=null;
+let lastValidVehicleSpeedKph=null;
+let diagnosticsPinned=false;
+let diagnosticsHideTimer=0;
 const COUNTER_WRAP=4294967296;
 const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
 const MAX_VEHICLE_SPEED_POINTS=40;
@@ -2625,6 +2404,7 @@ function trimVehicleSpeedHistory(uptimeMs){
 function resetVehicleSpeedHistory(){
   vehicleSpeedHistory=[];
   lastVehicleSpeedUptimeMs=null;
+  lastValidVehicleSpeedKph=null;
 }
 
 function updateVehicleSpeedHistory(data){
@@ -2754,7 +2534,20 @@ function updateVehicleSpeedTelemetry(data){
   const speedValid=!!(data&&data.vehicleSpeedValid)&&Number.isFinite(speedKph);
   const speedEl=document.getElementById('vehicleSpeedDisplay');
   if(speedEl){
-    speedEl.textContent=speedValid?formatVehicleSpeedValue(speedKph):'--';
+    if(speedValid){
+      lastValidVehicleSpeedKph=speedKph;
+      speedEl.textContent=formatVehicleSpeedValue(speedKph);
+      speedEl.classList.remove('is-stale');
+      speedEl.classList.remove('is-empty');
+    }else if(lastValidVehicleSpeedKph!==null){
+      speedEl.textContent=formatVehicleSpeedValue(lastValidVehicleSpeedKph);
+      speedEl.classList.add('is-stale');
+      speedEl.classList.remove('is-empty');
+    }else{
+      speedEl.textContent='等待';
+      speedEl.classList.add('is-stale');
+      speedEl.classList.add('is-empty');
+    }
   }
 
   if(speedValid){
@@ -2833,6 +2626,79 @@ function closeDialog(evt,id){
   if(!dialog)return;
   if(evt&&evt.target&&evt.target!==dialog)return;
   dialog.classList.remove('open');
+}
+
+function setExpanded(id,expanded){
+  const el=document.getElementById(id);
+  if(el)el.setAttribute('aria-expanded',expanded?'true':'false');
+}
+
+function closeSettingsMenu(){
+  const menu=document.getElementById('settingsMenu');
+  const toggle=document.getElementById('settingsToggle');
+  if(menu)menu.classList.remove('open');
+  if(toggle)toggle.classList.remove('active');
+  setExpanded('settingsToggle',false);
+}
+
+function closeDiagnosticsPanel(){
+  diagnosticsPinned=false;
+  const panel=document.getElementById('diagnosticsPanel');
+  const toggle=document.getElementById('diagnosticsToggle');
+  if(panel)panel.classList.remove('open');
+  if(toggle)toggle.classList.remove('active');
+  setExpanded('diagnosticsToggle',false);
+}
+
+function showDiagnosticsPanel(){
+  clearTimeout(diagnosticsHideTimer);
+  closeSettingsMenu();
+  const panel=document.getElementById('diagnosticsPanel');
+  if(panel)panel.classList.add('open');
+  const toggle=document.getElementById('diagnosticsToggle');
+  if(toggle)toggle.classList.add('active');
+  setExpanded('diagnosticsToggle',true);
+}
+
+function hideDiagnosticsPanelSoon(){
+  clearTimeout(diagnosticsHideTimer);
+  diagnosticsHideTimer=setTimeout(()=>{
+    if(!diagnosticsPinned)closeDiagnosticsPanel();
+  },120);
+}
+
+function toggleDiagnosticsPanel(evt){
+  if(evt)evt.stopPropagation();
+  closeSettingsMenu();
+  const panel=document.getElementById('diagnosticsPanel');
+  const shouldOpen=!(panel&&panel.classList.contains('open')&&diagnosticsPinned);
+  if(shouldOpen){
+    diagnosticsPinned=true;
+    showDiagnosticsPanel();
+  }else{
+    closeDiagnosticsPanel();
+  }
+}
+
+function toggleSettingsMenu(evt){
+  if(evt)evt.stopPropagation();
+  closeDiagnosticsPanel();
+  const menu=document.getElementById('settingsMenu');
+  const toggle=document.getElementById('settingsToggle');
+  const shouldOpen=!(menu&&menu.classList.contains('open'));
+  if(menu)menu.classList.toggle('open',shouldOpen);
+  if(toggle)toggle.classList.toggle('active',shouldOpen);
+  setExpanded('settingsToggle',shouldOpen);
+}
+
+function closeTransientPanels(){
+  closeSettingsMenu();
+  closeDiagnosticsPanel();
+}
+
+function openDashboardDialog(id){
+  closeTransientPanels();
+  openDialog(id);
 }
 
 function syncNetworkForm(d){
@@ -3056,17 +2922,19 @@ function renderBlockedDnsRequests(requests,currentUptime){
 function poll(){
   fetch('/api/status').then(r=>r.json()).then(d=>{
     updateCanActivity(d);
-    document.getElementById('sErrors').textContent=d.errors;
+    setTextIfPresent('sErrors',d.errors);
     let u=d.uptime;
     let h=Math.floor(u/3600),m=Math.floor((u%3600)/60),s=u%60;
-    document.getElementById('sUptime').textContent=h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒';
+    setTextIfPresent('sUptime',h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒');
 
     updateCanStatus(d);
     updateVehicleSpeedTelemetry(d);
 
     let fsdEl=document.getElementById('sFSD');
-    fsdEl.textContent=d.fsdTriggered?'是':'否';
-    fsdEl.className=(d.fsdTriggered?'status-yes':'status-no')+' status-text';
+    if(fsdEl){
+      fsdEl.textContent=d.fsdTriggered?'是':'否';
+      fsdEl.className=(d.fsdTriggered?'status-yes':'status-no')+' status-text';
+    }
 
     let thermalClass='status-ok';
     if(d.thermalProtect)thermalClass='status-err';
@@ -3289,8 +3157,14 @@ syncDashboardSummary();
 
 document.addEventListener('keydown',evt=>{
   if(evt.key!=='Escape')return;
+  closeTransientPanels();
   closePicker();
   document.querySelectorAll('.dialog-modal.open').forEach(dialog=>dialog.classList.remove('open'));
+});
+
+document.addEventListener('click',evt=>{
+  if(evt.target&&evt.target.closest&&evt.target.closest('.hud-popover-wrap'))return;
+  closeTransientPanels();
 });
 
 function persistDnsRules(successText){

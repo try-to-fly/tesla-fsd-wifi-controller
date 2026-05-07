@@ -11,267 +11,284 @@
   </head>
   <body>
     <div class="page app-shell">
-      <header class="topbar">
-        <div class="brand-block">
-          <div class="brand-kicker">TESLA FSD WIFI CONTROLLER</div>
-          <h1>FSD 控制器</h1>
+      <header class="hud-topbar">
+        <div class="hud-identity">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="hud-name">FSD 控制器</span>
+          <span class="hud-divider"></span>
+          <span id="hwModeBadge">硬件 --</span>
         </div>
-        <div class="toolbar">
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('fsdModal')"
+
+        <div class="hud-actions">
+          <div
+            class="hud-popover-wrap details-wrap"
+            onmouseenter="showDiagnosticsPanel()"
+            onmouseleave="hideDiagnosticsPanelSoon()"
           >
-            <span class="toolbar-label">FSD 设置</span>
-            <span class="toolbar-meta" id="toolbarFsdMeta">硬件 --</span>
-          </button>
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('dnsModal')"
-          >
-            <span class="toolbar-label">白名单过滤</span>
-            <span class="toolbar-meta" id="toolbarDnsMeta">规则 --</span>
-          </button>
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('networkModal')"
-          >
-            <span class="toolbar-label">网络热点</span>
-            <span class="toolbar-meta" id="toolbarNetworkMeta">上游 --</span>
-          </button>
-          <button
-            type="button"
-            class="toolbar-btn"
-            onclick="openDialog('otaModal')"
-          >
-            <span class="toolbar-label">固件升级</span>
-            <span class="toolbar-meta">上传 .bin</span>
-          </button>
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label="查看诊断信息"
+              aria-expanded="false"
+              id="diagnosticsToggle"
+              onclick="toggleDiagnosticsPanel(event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9"></circle>
+                <path d="M12 10v7"></path>
+                <path d="M12 7h.01"></path>
+              </svg>
+            </button>
+
+            <aside
+              class="diagnostics-popover"
+              id="diagnosticsPanel"
+              onclick="event.stopPropagation()"
+            >
+              <div class="popover-head">
+                <span>诊断信息</span>
+                <button
+                  type="button"
+                  class="mini-close"
+                  aria-label="关闭诊断信息"
+                  onclick="closeDiagnosticsPanel()"
+                >
+                  &times;
+                </button>
+              </div>
+              <div class="diagnostics-grid">
+                <div class="diag-item">
+                  <span>收包变化</span>
+                  <strong id="sRX" class="status-no status-text">--</strong>
+                  <small id="sRXMeta">等待速率采样</small>
+                </div>
+                <div class="diag-item">
+                  <span>CAN 总线</span>
+                  <strong id="sCAN" class="status-no status-text">等待</strong>
+                  <small id="sCANMeta">等待第一帧 CAN</small>
+                </div>
+                <div class="diag-item compact">
+                  <span>错误</span>
+                  <strong id="sErrors" class="amber">0</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>运行时间</span>
+                  <strong id="sUptime">0秒</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>FSD 触发</span>
+                  <strong id="sFSD" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>温控</span>
+                  <strong id="sThermal" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item">
+                  <span>当前热点</span>
+                  <strong
+                    id="sCurrentUpstream"
+                    class="status-no status-text status-wide"
+                    >--</strong
+                  >
+                </div>
+                <div class="diag-item compact">
+                  <span>RSSI</span>
+                  <strong id="sUpstreamRSSI" class="status-no status-text"
+                    >--</strong
+                  >
+                </div>
+                <div class="diag-item compact">
+                  <span>AP 客户端</span>
+                  <strong id="sAPClients" class="status-no status-text">0</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>DNS</span>
+                  <strong
+                    id="sDNSMode"
+                    class="status-no status-text status-wide"
+                    >--</strong
+                  >
+                </div>
+                <div class="diag-item compact">
+                  <span>白名单</span>
+                  <strong id="sDNSCount" class="status-no status-text">0</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>已拦截</span>
+                  <strong id="sDNSBlocked" class="status-no status-text">0</strong>
+                </div>
+                <div class="diag-item">
+                  <span>本地 AP</span>
+                  <strong id="sAP" class="status-ok status-text">--</strong>
+                </div>
+              </div>
+            </aside>
+          </div>
+
+          <div class="hud-popover-wrap">
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label="打开设置"
+              aria-expanded="false"
+              id="settingsToggle"
+              onclick="toggleSettingsMenu(event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"
+                ></path>
+                <path
+                  d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .55l-.08.08a2 2 0 0 1-3.42-1.41v-.08A1.7 1.7 0 0 0 9.5 17a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 5.1 12a1.7 1.7 0 0 0-.55-1l-.08-.08A2 2 0 0 1 5.88 7.5h.08A1.7 1.7 0 0 0 7.5 6.5a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 0 1 9.93 1.74l.06.06A1.7 1.7 0 0 0 12 2.1a1.7 1.7 0 0 0 1-.55l.08-.08A2 2 0 0 1 16.5 2.88v.08A1.7 1.7 0 0 0 17.5 4.5a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 21.9 9a1.7 1.7 0 0 0 .55 1l.08.08a2 2 0 0 1-1.41 3.42h-.08A1.7 1.7 0 0 0 19.4 15Z"
+                ></path>
+              </svg>
+            </button>
+
+            <nav
+              class="settings-menu"
+              id="settingsMenu"
+              onclick="event.stopPropagation()"
+            >
+              <button type="button" onclick="openDashboardDialog('fsdModal')">
+                <span>FSD 设置</span>
+                <small id="toolbarFsdMeta">硬件 --</small>
+              </button>
+              <button type="button" onclick="openDashboardDialog('dnsModal')">
+                <span>白名单过滤</span>
+                <small id="toolbarDnsMeta">规则 --</small>
+              </button>
+              <button
+                type="button"
+                onclick="openDashboardDialog('networkModal')"
+              >
+                <span>网络热点</span>
+                <small id="toolbarNetworkMeta">上游 --</small>
+              </button>
+              <button type="button" onclick="openDashboardDialog('otaModal')">
+                <span>固件升级</span>
+                <small>上传 .bin</small>
+              </button>
+            </nav>
+          </div>
         </div>
       </header>
 
-      <main class="dashboard-main">
-        <section class="hero-card speed-card">
-          <div class="section-tag">实时速度</div>
-          <div class="speed-card-head">
-            <div>
-              <h2>当前车速</h2>
-              <p>上方看实时车速，下方看最近 30 秒变化曲线，并估算纵向加速度。</p>
-            </div>
-            <div class="hardware-pill" id="hwModeBadge">硬件 --</div>
-          </div>
-
-          <div class="speed-hero">
-            <div class="speed-quick speed-live-card">
-              <div class="speed-quick-label">车辆当前速度</div>
-              <div class="speed-quick-stack">
-                <div class="speed-quick-value" id="vehicleSpeedDisplay">--</div>
-                <div class="speed-quick-unit">km/h</div>
-              </div>
-              <div class="speed-quick-note" id="vehicleSpeedMeta">
-                等待 CAN 车速
-              </div>
-            </div>
-
-            <div class="speed-chart-card">
-              <div class="speed-chart-head">
-                <span>最近 30 秒速度变化</span>
-                <span id="vehicleSpeedTrendMeta">波动 --</span>
-              </div>
-              <div class="speed-chart-wrap">
-                <svg
-                  class="speed-chart"
-                  viewBox="0 0 320 128"
-                  preserveAspectRatio="none"
-                  aria-hidden="true"
-                >
-                  <line
-                    class="speed-chart-grid"
-                    x1="0"
-                    y1="20"
-                    x2="320"
-                    y2="20"
-                  ></line>
-                  <line
-                    class="speed-chart-grid"
-                    x1="0"
-                    y1="64"
-                    x2="320"
-                    y2="64"
-                  ></line>
-                  <line
-                    class="speed-chart-grid"
-                    x1="0"
-                    y1="108"
-                    x2="320"
-                    y2="108"
-                  ></line>
-                  <path
-                    id="vehicleSpeedChartArea"
-                    class="speed-chart-area"
-                    d=""
-                  ></path>
-                  <polyline
-                    id="vehicleSpeedChartLine"
-                    class="speed-chart-line"
-                    points=""
-                  ></polyline>
-                  <circle
-                    id="vehicleSpeedChartDot"
-                    class="speed-chart-dot"
-                    cx="0"
-                    cy="0"
-                    r="4"
-                  ></circle>
-                </svg>
-                <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
-                  等待最近车速样本
+      <main class="hud-main">
+        <section class="speed-stage" aria-label="实时车速">
+          <div class="speed-grid">
+            <div class="speed-primary">
+              <div class="data-label">车辆当前速度</div>
+              <div class="speed-number-row">
+                <div class="speed-value is-empty" id="vehicleSpeedDisplay">
+                  等待
                 </div>
+                <div class="speed-unit">km/h</div>
               </div>
-              <div class="speed-chart-meta">
-                <span id="vehicleSpeedChartMin">最低 --</span>
-                <span>最近 30 秒</span>
-                <span id="vehicleSpeedChartMax">最高 --</span>
+              <div class="speed-meta" id="vehicleSpeedMeta">等待 CAN 车速</div>
+            </div>
+
+            <div class="side-telemetry">
+              <div class="telemetry-item limit">
+                <span>识别限速</span>
+                <strong id="detectedSpeedLimitDisplay">--</strong>
+                <small id="detectedSpeedSourceDisplay">--</small>
+              </div>
+              <div class="telemetry-item offset">
+                <span>当前增量</span>
+                <strong id="speedOffsetDisplay">+0 km/h</strong>
+                <small id="speedOffsetState">读取中</small>
+              </div>
+              <div class="telemetry-item modified">
+                <span>改包变化</span>
+                <strong id="sModified" class="status-no">--</strong>
+                <small id="sModifiedMeta">等待速率采样</small>
               </div>
             </div>
           </div>
 
-          <div class="hero-controls">
-            <div class="speed-readonly-grid">
-              <article class="speed-info-tile">
-                <span class="speed-info-label">纵向加速度</span>
-                <strong class="speed-info-value" id="vehicleAccelerationDisplay"
-                  >--</strong
-                >
-                <span class="speed-info-sub" id="vehicleAccelerationMeta"
-                  >按最近速度变化估算</span
-                >
-              </article>
-              <article class="speed-info-tile">
-                <span class="speed-info-label">当前增量</span>
-                <strong class="speed-info-value" id="speedOffsetDisplay"
-                  >+0 km/h</strong
-                >
-                <span class="speed-info-sub" id="speedOffsetState">读取中</span>
-              </article>
-              <article class="speed-info-tile">
-                <span class="speed-info-label">识别限速</span>
-                <strong class="speed-info-value" id="detectedSpeedLimitDisplay"
-                  >--</strong
-                >
-              </article>
-              <article class="speed-info-tile">
-                <span class="speed-info-label">限速来源</span>
-                <strong
-                  class="speed-info-value speed-info-meta"
-                  id="detectedSpeedSourceDisplay"
-                  >--</strong
-                >
-              </article>
-              <article class="speed-info-tile speed-info-wide">
-                <span class="speed-info-label">自动策略</span>
-                <strong
-                  class="speed-info-value speed-info-meta"
-                  id="speedPolicySummary"
-                  >低速更积极，高速 100+ 不超过 10%</strong
-                >
-              </article>
+          <div class="curve-panel">
+            <div class="curve-head">
+              <span>最近 30 秒速度变化</span>
+              <span id="vehicleSpeedTrendMeta">波动 --</span>
+            </div>
+            <div class="speed-chart-wrap">
+              <svg
+                class="speed-chart"
+                viewBox="0 0 320 128"
+                preserveAspectRatio="none"
+                aria-label="最近 30 秒速度变化曲线"
+                role="img"
+              >
+                <line
+                  class="speed-chart-grid"
+                  x1="0"
+                  y1="20"
+                  x2="320"
+                  y2="20"
+                ></line>
+                <line
+                  class="speed-chart-grid"
+                  x1="0"
+                  y1="64"
+                  x2="320"
+                  y2="64"
+                ></line>
+                <line
+                  class="speed-chart-grid"
+                  x1="0"
+                  y1="108"
+                  x2="320"
+                  y2="108"
+                ></line>
+                <path
+                  id="vehicleSpeedChartArea"
+                  class="speed-chart-area"
+                  d=""
+                ></path>
+                <polyline
+                  id="vehicleSpeedChartLine"
+                  class="speed-chart-line"
+                  points=""
+                ></polyline>
+                <circle
+                  id="vehicleSpeedChartDot"
+                  class="speed-chart-dot"
+                  cx="0"
+                  cy="0"
+                  r="4"
+                ></circle>
+              </svg>
+              <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
+                等待最近车速样本
+              </div>
+            </div>
+            <div class="curve-meta">
+              <span id="vehicleSpeedChartMin">最低 --</span>
+              <span id="vehicleAccelerationDisplay">--</span>
+              <span id="vehicleSpeedChartMax">最高 --</span>
+            </div>
+            <div class="curve-subline" id="vehicleAccelerationMeta">
+              按最近速度变化估算
             </div>
           </div>
         </section>
 
-        <section class="hero-card metrics-card">
-          <div class="metrics-head">
-            <div>
-              <div class="section-tag">实时指标</div>
-              <h2>核心数据</h2>
-            </div>
-            <p>主要状态保持在首屏，一眼确认设备是否正常工作。</p>
+        <section class="run-strip" aria-label="运行摘要">
+          <div class="run-item">
+            <span>热点</span>
+            <strong id="sUpstream" class="status-no status-text">--</strong>
           </div>
-
-          <div class="metrics-grid">
-            <article class="metric-panel primary metric-modified">
-              <span class="metric-label">改包变化</span>
-              <strong class="metric-value status-no" id="sModified">--</strong>
-              <span class="metric-meta" id="sModifiedMeta">等待速率采样</span>
-            </article>
-            <article class="metric-panel primary metric-rx">
-              <span class="metric-label">收包变化</span>
-              <strong class="metric-value status-no" id="sRX">--</strong>
-              <span class="metric-meta" id="sRXMeta">等待速率采样</span>
-            </article>
-            <article class="metric-panel primary metric-errors">
-              <span class="metric-label">错误</span>
-              <strong class="metric-value amber" id="sErrors">0</strong>
-            </article>
-            <article class="metric-panel primary metric-uptime">
-              <span class="metric-label">运行时间</span>
-              <strong class="metric-value metric-time" id="sUptime">0秒</strong>
-            </article>
-            <article class="metric-panel metric-can">
-              <span class="metric-label">CAN 总线</span>
-              <strong id="sCAN" class="status-no status-text">等待</strong>
-              <span class="metric-meta" id="sCANMeta">等待第一帧 CAN</span>
-            </article>
-            <article class="metric-panel metric-fsd">
-              <span class="metric-label">FSD 触发</span>
-              <strong id="sFSD" class="status-no status-text">--</strong>
-            </article>
-            <article class="metric-panel wide metric-temp">
-              <span class="metric-label">芯片温度</span>
-              <strong id="sChipTemp" class="status-no status-text status-wide"
-                >--</strong
-              >
-            </article>
-            <article class="metric-panel wide metric-thermal">
-              <span class="metric-label">温控状态</span>
-              <strong id="sThermal" class="status-no status-text status-wide"
-                >--</strong
-              >
-            </article>
-          </div>
-        </section>
-
-        <section class="live-strip">
-          <div class="live-item">
-            <span class="live-label">上游状态</span>
-            <span id="sUpstream" class="status-no status-text">--</span>
-          </div>
-          <div class="live-item">
-            <span class="live-label">当前热点</span>
-            <span
-              id="sCurrentUpstream"
-              class="status-no status-text status-wide"
-              >--</span
+          <div class="run-item">
+            <span>芯片温度</span>
+            <strong id="sChipTemp" class="status-no status-text status-wide"
+              >--</strong
             >
           </div>
-          <div class="live-item">
-            <span class="live-label">上游 RSSI</span>
-            <span id="sUpstreamRSSI" class="status-no status-text">--</span>
-          </div>
-          <div class="live-item compact">
-            <span class="live-label">AP 客户端</span>
-            <span id="sAPClients" class="status-no status-text">0</span>
-          </div>
-          <div class="live-item">
-            <span class="live-label">DNS 状态</span>
-            <span id="sDNSMode" class="status-no status-text status-wide"
-              >--</span
+          <div class="run-item policy">
+            <span>策略</span>
+            <strong id="speedPolicySummary"
+              >低速更积极，高速 100+ 不超过 10%</strong
             >
-          </div>
-          <div class="live-item compact">
-            <span class="live-label">白名单</span>
-            <span id="sDNSCount" class="status-no status-text">0</span>
-          </div>
-          <div class="live-item compact">
-            <span class="live-label">已拦截</span>
-            <span id="sDNSBlocked" class="status-no status-text">0</span>
-          </div>
-          <div class="live-item">
-            <span class="live-label">本地 AP</span>
-            <span id="sAP" class="status-ok status-text">--</span>
           </div>
         </section>
       </main>

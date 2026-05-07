@@ -8,6 +8,9 @@ let lastCanCounters=null;
 let activePickerId='';
 let vehicleSpeedHistory=[];
 let lastVehicleSpeedUptimeMs=null;
+let lastValidVehicleSpeedKph=null;
+let diagnosticsPinned=false;
+let diagnosticsHideTimer=0;
 const COUNTER_WRAP=4294967296;
 const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
 const MAX_VEHICLE_SPEED_POINTS=40;
@@ -222,6 +225,7 @@ function trimVehicleSpeedHistory(uptimeMs){
 function resetVehicleSpeedHistory(){
   vehicleSpeedHistory=[];
   lastVehicleSpeedUptimeMs=null;
+  lastValidVehicleSpeedKph=null;
 }
 
 function updateVehicleSpeedHistory(data){
@@ -351,7 +355,20 @@ function updateVehicleSpeedTelemetry(data){
   const speedValid=!!(data&&data.vehicleSpeedValid)&&Number.isFinite(speedKph);
   const speedEl=document.getElementById('vehicleSpeedDisplay');
   if(speedEl){
-    speedEl.textContent=speedValid?formatVehicleSpeedValue(speedKph):'--';
+    if(speedValid){
+      lastValidVehicleSpeedKph=speedKph;
+      speedEl.textContent=formatVehicleSpeedValue(speedKph);
+      speedEl.classList.remove('is-stale');
+      speedEl.classList.remove('is-empty');
+    }else if(lastValidVehicleSpeedKph!==null){
+      speedEl.textContent=formatVehicleSpeedValue(lastValidVehicleSpeedKph);
+      speedEl.classList.add('is-stale');
+      speedEl.classList.remove('is-empty');
+    }else{
+      speedEl.textContent='等待';
+      speedEl.classList.add('is-stale');
+      speedEl.classList.add('is-empty');
+    }
   }
 
   if(speedValid){
@@ -430,6 +447,79 @@ function closeDialog(evt,id){
   if(!dialog)return;
   if(evt&&evt.target&&evt.target!==dialog)return;
   dialog.classList.remove('open');
+}
+
+function setExpanded(id,expanded){
+  const el=document.getElementById(id);
+  if(el)el.setAttribute('aria-expanded',expanded?'true':'false');
+}
+
+function closeSettingsMenu(){
+  const menu=document.getElementById('settingsMenu');
+  const toggle=document.getElementById('settingsToggle');
+  if(menu)menu.classList.remove('open');
+  if(toggle)toggle.classList.remove('active');
+  setExpanded('settingsToggle',false);
+}
+
+function closeDiagnosticsPanel(){
+  diagnosticsPinned=false;
+  const panel=document.getElementById('diagnosticsPanel');
+  const toggle=document.getElementById('diagnosticsToggle');
+  if(panel)panel.classList.remove('open');
+  if(toggle)toggle.classList.remove('active');
+  setExpanded('diagnosticsToggle',false);
+}
+
+function showDiagnosticsPanel(){
+  clearTimeout(diagnosticsHideTimer);
+  closeSettingsMenu();
+  const panel=document.getElementById('diagnosticsPanel');
+  if(panel)panel.classList.add('open');
+  const toggle=document.getElementById('diagnosticsToggle');
+  if(toggle)toggle.classList.add('active');
+  setExpanded('diagnosticsToggle',true);
+}
+
+function hideDiagnosticsPanelSoon(){
+  clearTimeout(diagnosticsHideTimer);
+  diagnosticsHideTimer=setTimeout(()=>{
+    if(!diagnosticsPinned)closeDiagnosticsPanel();
+  },120);
+}
+
+function toggleDiagnosticsPanel(evt){
+  if(evt)evt.stopPropagation();
+  closeSettingsMenu();
+  const panel=document.getElementById('diagnosticsPanel');
+  const shouldOpen=!(panel&&panel.classList.contains('open')&&diagnosticsPinned);
+  if(shouldOpen){
+    diagnosticsPinned=true;
+    showDiagnosticsPanel();
+  }else{
+    closeDiagnosticsPanel();
+  }
+}
+
+function toggleSettingsMenu(evt){
+  if(evt)evt.stopPropagation();
+  closeDiagnosticsPanel();
+  const menu=document.getElementById('settingsMenu');
+  const toggle=document.getElementById('settingsToggle');
+  const shouldOpen=!(menu&&menu.classList.contains('open'));
+  if(menu)menu.classList.toggle('open',shouldOpen);
+  if(toggle)toggle.classList.toggle('active',shouldOpen);
+  setExpanded('settingsToggle',shouldOpen);
+}
+
+function closeTransientPanels(){
+  closeSettingsMenu();
+  closeDiagnosticsPanel();
+}
+
+function openDashboardDialog(id){
+  closeTransientPanels();
+  openDialog(id);
 }
 
 function syncNetworkForm(d){
@@ -653,17 +743,19 @@ function renderBlockedDnsRequests(requests,currentUptime){
 function poll(){
   fetch('/api/status').then(r=>r.json()).then(d=>{
     updateCanActivity(d);
-    document.getElementById('sErrors').textContent=d.errors;
+    setTextIfPresent('sErrors',d.errors);
     let u=d.uptime;
     let h=Math.floor(u/3600),m=Math.floor((u%3600)/60),s=u%60;
-    document.getElementById('sUptime').textContent=h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒';
+    setTextIfPresent('sUptime',h>0?h+'时'+m+'分':m>0?m+'分'+s+'秒':s+'秒');
 
     updateCanStatus(d);
     updateVehicleSpeedTelemetry(d);
 
     let fsdEl=document.getElementById('sFSD');
-    fsdEl.textContent=d.fsdTriggered?'是':'否';
-    fsdEl.className=(d.fsdTriggered?'status-yes':'status-no')+' status-text';
+    if(fsdEl){
+      fsdEl.textContent=d.fsdTriggered?'是':'否';
+      fsdEl.className=(d.fsdTriggered?'status-yes':'status-no')+' status-text';
+    }
 
     let thermalClass='status-ok';
     if(d.thermalProtect)thermalClass='status-err';
@@ -886,8 +978,14 @@ syncDashboardSummary();
 
 document.addEventListener('keydown',evt=>{
   if(evt.key!=='Escape')return;
+  closeTransientPanels();
   closePicker();
   document.querySelectorAll('.dialog-modal.open').forEach(dialog=>dialog.classList.remove('open'));
+});
+
+document.addEventListener('click',evt=>{
+  if(evt.target&&evt.target.closest&&evt.target.closest('.hud-popover-wrap'))return;
+  closeTransientPanels();
 });
 
 function persistDnsRules(successText){
