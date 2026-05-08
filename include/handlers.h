@@ -193,7 +193,6 @@ inline void updateHW3DetectedSpeedLimit() {
 
 inline void recordRxActivity() {
     cfg.rxCount++;
-    cfg.lastRxMillis = millis();
 }
 
 inline void recordSendResult(bool sent) {

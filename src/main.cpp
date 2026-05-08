@@ -63,6 +63,7 @@ static Preferences    prefs;
 static DNSWhitelistServer dnsServer;
 static volatile bool  otaPendingRestart = false;
 static bool           natEnabled = false;
+static volatile size_t debugLogCachedBytes = 0;
 
 struct LocalAPConfig {
     char ssid[33] = "FSD-Controller";
@@ -367,14 +368,14 @@ void unlockDebugLog() {
     if (debugLogMutex != nullptr) xSemaphoreGive(debugLogMutex);
 }
 
-void trimDebugLogLocked() {
+size_t trimDebugLogLocked() {
     File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
-    if (!file) return;
+    if (!file) return 0;
 
     size_t size = file.size();
     if (size <= DEBUG_LOG_MAX_BYTES) {
         file.close();
-        return;
+        return size;
     }
 
     size_t start = size > DEBUG_LOG_RETAIN_BYTES ? size - DEBUG_LOG_RETAIN_BYTES : 0;
@@ -393,9 +394,10 @@ void trimDebugLogLocked() {
     file.close();
 
     File out = SPIFFS.open(DEBUG_LOG_PATH, FILE_WRITE);
-    if (!out) return;
+    if (!out) return size;
     out.print(tail);
     out.close();
+    return tail.length();
 }
 
 void appendDebugLogRecord(const char* tag, const String& body) {
@@ -415,7 +417,7 @@ void appendDebugLogRecord(const char* tag, const String& body) {
     if (file) {
         file.print(line);
         file.close();
-        trimDebugLogLocked();
+        debugLogCachedBytes = trimDebugLogLocked();
     }
 
     unlockDebugLog();
@@ -456,6 +458,7 @@ String readDebugLogText() {
 void clearDebugLogStorage() {
     if (!debugLogReady || !lockDebugLog()) return;
     SPIFFS.remove(DEBUG_LOG_PATH);
+    debugLogCachedBytes = 0;
     unlockDebugLog();
 }
 
@@ -1252,7 +1255,7 @@ String buildStatusJson() {
     uint32_t dnsBlockedCount = 0;
     size_t dnsBlockedRecentCount = 0;
     String dnsBlockedRequests = buildBlockedDnsRequestsJson(dnsBlockedCount, dnsBlockedRecentCount);
-    size_t debugLogBytes = getDebugLogSizeBytes();
+    size_t debugLogBytes = debugLogReady ? static_cast<size_t>(debugLogCachedBytes) : 0;
     String json;
 
     json.reserve(7400);
@@ -1717,7 +1720,7 @@ void canTask(void* param) {
             activity = true;
             handleMessage(frame, canDriver);
         }
-        logRuntimeHeartbeat();
+        if (activity) cfg.lastRxMillis = millis();
         // LED: on during activity, off when idle
         digitalWrite(PIN_LED, activity ? HIGH : LOW);
         // Yield to avoid starving watchdog
@@ -1729,6 +1732,13 @@ void dnsTask(void* param) {
     for (;;) {
         dnsServer.processNextRequest(dnsCfg, WiFi.status() == WL_CONNECTED);
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void diagnosticTask(void* param) {
+    for (;;) {
+        logRuntimeHeartbeat();
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
 
@@ -1805,6 +1815,7 @@ void setup() {
 
     setupWebServer();
     xTaskCreatePinnedToCore(dnsTask, "DNS", 4096, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(diagnosticTask, "DIAG", 6144, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(canTask, "CAN", 8192, NULL, 2, NULL, 1);
 }
 
