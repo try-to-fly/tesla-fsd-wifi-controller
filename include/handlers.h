@@ -268,10 +268,15 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
         }
         if (index == 2 && cfg.fsdTriggered && cfg.fsdEnable) {
             uint8_t originalOffsetKph = static_cast<uint8_t>(std::min<uint16_t>(hw3RawUserOffsetKph, 30));
-            uint8_t appliedOffsetKph = cfg.detectedSpeedLimitKph > 0
-                ? computeSmartOffsetKph(cfg.detectedSpeedLimitKph)
+            SmartSpeedDecision smartDecision = computeSmartSpeedDecision(cfg.detectedSpeedLimitKph);
+            uint8_t appliedOffsetKph = smartDecision.offsetKph > 0
+                ? smartDecision.offsetKph
                 : std::min<uint8_t>(originalOffsetKph, HW3_AUTO_OFFSET_FALLBACK_KPH);
-            int speedOffset = encodeOffsetFieldFromKph(appliedOffsetKph);
+            uint8_t appliedOffsetPercent = smartDecision.percentCap > 0
+                ? smartDecision.percentCap
+                : appliedOffsetKph;
+            // 状态/API 保留 km/h 增量给页面显示；CAN 字段写百分比 raw，避免低速限速只上浮到约 33。
+            int speedOffset = encodeOffsetFieldFromPercent(appliedOffsetPercent);
             cfg.appliedSpeedOffsetKph = appliedOffsetKph;
             frame.data[0] &= ~(0b11000000);
             frame.data[1] &= ~(0b00111111);

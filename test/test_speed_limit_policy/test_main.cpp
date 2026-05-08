@@ -44,7 +44,17 @@ void test_zero_or_invalid_speed_returns_zero_offset() {
 void test_km_only_helpers_follow_raw_can_values() {
     TEST_ASSERT_EQUAL_UINT16(100, decodeFiveStepSpeedLimitKph(20));
     TEST_ASSERT_EQUAL_UINT16(50, decodeMapSpeedLimitKph(10));
-    TEST_ASSERT_EQUAL_INT(50, encodeOffsetFieldFromKph(10));
+    TEST_ASSERT_EQUAL_INT(50, encodeOffsetFieldFromPercent(10));
+    TEST_ASSERT_EQUAL_INT(90, encodeOffsetFieldFromPercent(18));
+    TEST_ASSERT_EQUAL_INT(100, encodeOffsetFieldFromPercent(20));
+    TEST_ASSERT_EQUAL_INT(100, encodeOffsetFieldFromPercent(30));
+}
+
+void test_smart_decision_keeps_percent_and_kph_separate() {
+    SmartSpeedDecision decision = computeSmartSpeedDecision(60);
+    TEST_ASSERT_EQUAL_UINT8(18, decision.percentCap);
+    TEST_ASSERT_EQUAL_UINT8(12, decision.hardCapKph);
+    TEST_ASSERT_EQUAL_UINT8(11, decision.offsetKph);
 }
 
 int main() {
@@ -54,5 +64,6 @@ int main() {
     RUN_TEST(test_key_speed_decisions_match_policy_table);
     RUN_TEST(test_zero_or_invalid_speed_returns_zero_offset);
     RUN_TEST(test_km_only_helpers_follow_raw_can_values);
+    RUN_TEST(test_smart_decision_keeps_percent_and_kph_separate);
     return UNITY_END();
 }

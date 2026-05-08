@@ -63,6 +63,8 @@ inline uint8_t computeSmartOffsetKph(uint16_t limitKph) {
     return computeSmartSpeedDecision(limitKph).offsetKph;
 }
 
-inline int encodeOffsetFieldFromKph(uint8_t offsetKph) {
-    return static_cast<int>(offsetKph) * 5;
+// 1021/MUX2 的注入字段在实车上按百分比 raw 解释：raw = percent * 5。
+// UI 展示的是 offsetKph（例如 30km/h -> +6），但 CAN 里要写 percentCap（例如 20% -> raw 100）。
+inline int encodeOffsetFieldFromPercent(uint8_t offsetPercent) {
+    return static_cast<int>(std::min<uint8_t>(offsetPercent, 20U)) * 5;
 }
