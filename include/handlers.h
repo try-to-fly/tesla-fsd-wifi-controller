@@ -272,11 +272,10 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
             uint8_t appliedOffsetKph = smartDecision.offsetKph > 0
                 ? smartDecision.offsetKph
                 : std::min<uint8_t>(originalOffsetKph, HW3_AUTO_OFFSET_FALLBACK_KPH);
-            uint8_t appliedOffsetPercent = smartDecision.percentCap > 0
-                ? smartDecision.percentCap
-                : appliedOffsetKph;
-            // 状态/API 保留 km/h 增量给页面显示；CAN 字段写百分比 raw，避免低速限速只上浮到约 33。
-            int speedOffset = encodeOffsetFieldFromPercent(appliedOffsetPercent);
+            // 状态/API 保留 km/h 增量给页面显示；CAN 字段直接写按目标车速换算出的百分比 raw。
+            int speedOffset = smartDecision.offsetRaw > 0
+                ? smartDecision.offsetRaw
+                : encodeOffsetFieldFromPercent(appliedOffsetKph);
             cfg.appliedSpeedOffsetKph = appliedOffsetKph;
             frame.data[0] &= ~(0b11000000);
             frame.data[1] &= ~(0b00111111);

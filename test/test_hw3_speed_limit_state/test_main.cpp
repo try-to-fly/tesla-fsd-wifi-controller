@@ -174,7 +174,7 @@ void test_hw3_applies_smart_offset_when_fsd_is_active() {
     TEST_ASSERT_EQUAL_UINT16(50, decodeInjectedOffsetField(driver.sentFrames.back()));
 }
 
-void test_hw3_injects_percent_field_for_smart_limit_policy() {
+void test_hw3_injects_target_speed_raw_for_smart_limit_policy() {
     FakeCanDriver driver;
     cfg.chinaMode = false;
 
@@ -186,11 +186,11 @@ void test_hw3_injects_percent_field_for_smart_limit_policy() {
     handleHW3(index2Frame, driver);
 
     TEST_ASSERT_EQUAL_UINT16(60, cfg.detectedSpeedLimitKph);
-    TEST_ASSERT_EQUAL_UINT8(11, cfg.appliedSpeedOffsetKph);
-    TEST_ASSERT_EQUAL_UINT16(90, decodeInjectedOffsetField(driver.sentFrames.back()));
+    TEST_ASSERT_EQUAL_UINT8(12, cfg.appliedSpeedOffsetKph);
+    TEST_ASSERT_EQUAL_UINT16(100, decodeInjectedOffsetField(driver.sentFrames.back()));
 }
 
-void test_hw3_injects_percent_field_for_low_speed_limit_policy() {
+void test_hw3_injects_target_speed_raw_for_low_speed_limit_policy() {
     FakeCanDriver driver;
     cfg.chinaMode = false;
 
@@ -202,8 +202,8 @@ void test_hw3_injects_percent_field_for_low_speed_limit_policy() {
     handleHW3(index2Frame, driver);
 
     TEST_ASSERT_EQUAL_UINT16(30, cfg.detectedSpeedLimitKph);
-    TEST_ASSERT_EQUAL_UINT8(6, cfg.appliedSpeedOffsetKph);
-    TEST_ASSERT_EQUAL_UINT16(100, decodeInjectedOffsetField(driver.sentFrames.back()));
+    TEST_ASSERT_EQUAL_UINT8(15, cfg.appliedSpeedOffsetKph);
+    TEST_ASSERT_EQUAL_UINT16(250, decodeInjectedOffsetField(driver.sentFrames.back()));
 }
 
 void test_hw3_does_not_inject_offset_when_fsd_is_inactive() {
@@ -337,8 +337,8 @@ int main() {
     RUN_TEST(test_hw3_can_resolve_limit_before_760_arrives);
     RUN_TEST(test_hw3_reset_clears_cached_speed_limit_state);
     RUN_TEST(test_hw3_applies_smart_offset_when_fsd_is_active);
-    RUN_TEST(test_hw3_injects_percent_field_for_smart_limit_policy);
-    RUN_TEST(test_hw3_injects_percent_field_for_low_speed_limit_policy);
+    RUN_TEST(test_hw3_injects_target_speed_raw_for_smart_limit_policy);
+    RUN_TEST(test_hw3_injects_target_speed_raw_for_low_speed_limit_policy);
     RUN_TEST(test_hw3_does_not_inject_offset_when_fsd_is_inactive);
     RUN_TEST(test_handle_message_tracks_rx_count_without_timestamp_work);
     RUN_TEST(test_hw3_send_success_tracks_last_modified_millis);

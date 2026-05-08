@@ -11,12 +11,13 @@ enum class SpeedLimitSource : uint8_t {
 };
 
 struct SmartSpeedDecision {
-    uint8_t percentCap = 0;
-    uint8_t hardCapKph = 0;
+    uint16_t targetKph = 0;
     uint8_t offsetKph = 0;
+    uint8_t offsetRaw = 0;
 };
 
 static constexpr uint8_t HW3_AUTO_OFFSET_FALLBACK_KPH = 10;
+static constexpr uint16_t HW3_MAX_TARGET_SPEED_KPH = 130;
 
 inline uint16_t decodeFiveStepSpeedLimitKph(uint8_t raw) {
     if (raw == 0 || raw >= 31) return 0;
@@ -28,43 +29,45 @@ inline uint16_t decodeMapSpeedLimitKph(uint8_t raw) {
     return static_cast<uint16_t>(raw) * 5U;
 }
 
-inline uint8_t getSmartOffsetPercentCap(uint16_t limitKph) {
-    if (limitKph <= 30) return 20;
-    if (limitKph <= 40) return 20;
-    if (limitKph <= 60) return 18;
-    if (limitKph <= 80) return 15;
-    if (limitKph < 100) return 12;
-    return 10;
+inline uint16_t computeSmartTargetSpeedKph(uint16_t limitKph) {
+    if (limitKph == 0) return 0;
+    if (limitKph < 30) return 30;
+    if (limitKph == 30) return 45;
+    if (limitKph == 40) return 55;
+    if (limitKph == 50) return 65;
+    if (limitKph == 60) return 72;
+    return std::min<uint16_t>(
+        static_cast<uint16_t>(limitKph + 10U),
+        HW3_MAX_TARGET_SPEED_KPH
+    );
 }
 
-inline uint8_t getSmartOffsetHardCapKph(uint16_t limitKph) {
-    if (limitKph <= 30) return 8;
-    if (limitKph <= 40) return 10;
-    if (limitKph <= 60) return 12;
-    return 15;
+// 1021/MUX2 的注入字段在实车上按百分比 raw 解释：raw = offset% * 5。
+// 这里直接从“目标车速 - 识别限速”换算 raw，可保留 0.2% 精度，避免 40->55 这类目标被整数百分比粗化。
+inline int encodeOffsetFieldFromTargetKph(uint16_t limitKph, uint16_t targetKph) {
+    if (limitKph == 0 || targetKph <= limitKph) return 0;
+    uint32_t offsetKph = static_cast<uint32_t>(targetKph - limitKph);
+    uint32_t raw = (offsetKph * 500U + limitKph / 2U) / limitKph;
+    return static_cast<int>(std::min<uint32_t>(raw, 255U));
+}
+
+inline int encodeOffsetFieldFromPercent(uint16_t offsetPercent) {
+    return static_cast<int>(std::min<uint32_t>(static_cast<uint32_t>(offsetPercent) * 5U, 255U));
 }
 
 inline SmartSpeedDecision computeSmartSpeedDecision(uint16_t limitKph) {
     SmartSpeedDecision decision;
     if (limitKph == 0) return decision;
 
-    decision.percentCap = getSmartOffsetPercentCap(limitKph);
-    decision.hardCapKph = getSmartOffsetHardCapKph(limitKph);
-
-    uint16_t offset = static_cast<uint16_t>(
-        (static_cast<uint32_t>(limitKph) * decision.percentCap + 50U) / 100U
-    );
-    if (offset == 0) offset = 1;
-    decision.offsetKph = static_cast<uint8_t>(std::min<uint16_t>(offset, decision.hardCapKph));
+    decision.targetKph = computeSmartTargetSpeedKph(limitKph);
+    uint16_t offset = decision.targetKph > limitKph
+        ? static_cast<uint16_t>(decision.targetKph - limitKph)
+        : 0;
+    decision.offsetKph = static_cast<uint8_t>(std::min<uint16_t>(offset, 255U));
+    decision.offsetRaw = static_cast<uint8_t>(encodeOffsetFieldFromTargetKph(limitKph, decision.targetKph));
     return decision;
 }
 
 inline uint8_t computeSmartOffsetKph(uint16_t limitKph) {
     return computeSmartSpeedDecision(limitKph).offsetKph;
-}
-
-// 1021/MUX2 的注入字段在实车上按百分比 raw 解释：raw = percent * 5。
-// UI 展示的是 offsetKph（例如 30km/h -> +6），但 CAN 里要写 percentCap（例如 20% -> raw 100）。
-inline int encodeOffsetFieldFromPercent(uint8_t offsetPercent) {
-    return static_cast<int>(std::min<uint8_t>(offsetPercent, 20U)) * 5;
 }

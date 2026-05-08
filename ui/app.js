@@ -407,7 +407,7 @@ function syncDashboardSummary(data){
   const appliedOffsetLabel='+'+String(appliedOffsetKph)+' km/h';
   const sourceLabel=detectedSpeedSource||'--';
   let offsetState='读取中';
-  let policySummary='30/40 按 20%，50/60 按 18%，70/80 按 15%，90 按 12%，100+ 按 10%';
+  let policySummary='低于30→30，30→45，40→55，50→65，60→72，70起+10，最高130';
   let limitLabel='--';
 
   if(data&&detectedLimitKph>0){
