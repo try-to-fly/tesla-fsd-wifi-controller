@@ -525,9 +525,43 @@ button{
   fill:none;
   stroke:var(--cyan);
   stroke-width:3;
-  stroke-linecap:round;
-  stroke-linejoin:round;
+  stroke-linecap:square;
+  stroke-linejoin:miter;
   filter:drop-shadow(0 0 11px rgba(95,216,255,.42));
+}
+
+.speed-chart-samples circle{
+  fill:rgba(2,6,13,.92);
+  stroke:var(--cyan);
+  stroke-width:2;
+}
+
+.speed-chart-labels{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+.speed-chart-labels span{
+  position:absolute;
+  color:var(--text);
+  font-size:11px;
+  font-weight:800;
+  line-height:1;
+  text-shadow:
+    0 0 3px rgba(2,6,13,.96),
+    0 0 7px rgba(2,6,13,.96),
+    0 0 10px rgba(2,6,13,.96);
+  white-space:nowrap;
+  transform:translate(-50%,-50%);
+}
+
+.speed-chart-labels span.anchor-start{
+  transform:translate(0,-50%);
+}
+
+.speed-chart-labels span.anchor-end{
+  transform:translate(-100%,-50%);
 }
 
 .speed-chart-dot{

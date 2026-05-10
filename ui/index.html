@@ -208,7 +208,7 @@
 
           <div class="curve-panel">
             <div class="curve-head">
-              <span>最近 30 秒速度变化</span>
+              <span>最近 1 分钟速度变化</span>
               <span id="vehicleSpeedTrendMeta">波动 --</span>
             </div>
             <div class="speed-chart-wrap">
@@ -216,7 +216,7 @@
                 class="speed-chart"
                 viewBox="0 0 320 128"
                 preserveAspectRatio="none"
-                aria-label="最近 30 秒速度变化曲线"
+                aria-label="最近 1 分钟速度变化曲线"
                 role="img"
               >
                 <line
@@ -250,6 +250,10 @@
                   class="speed-chart-line"
                   points=""
                 ></polyline>
+                <g
+                  id="vehicleSpeedChartSamples"
+                  class="speed-chart-samples"
+                ></g>
                 <circle
                   id="vehicleSpeedChartDot"
                   class="speed-chart-dot"
@@ -258,6 +262,11 @@
                   r="4"
                 ></circle>
               </svg>
+              <div
+                id="vehicleSpeedChartLabels"
+                class="speed-chart-labels"
+                aria-hidden="true"
+              ></div>
               <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
                 等待最近车速样本
               </div>

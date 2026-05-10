@@ -541,9 +541,43 @@ button{
   fill:none;
   stroke:var(--cyan);
   stroke-width:3;
-  stroke-linecap:round;
-  stroke-linejoin:round;
+  stroke-linecap:square;
+  stroke-linejoin:miter;
   filter:drop-shadow(0 0 11px rgba(95,216,255,.42));
+}
+
+.speed-chart-samples circle{
+  fill:rgba(2,6,13,.92);
+  stroke:var(--cyan);
+  stroke-width:2;
+}
+
+.speed-chart-labels{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+.speed-chart-labels span{
+  position:absolute;
+  color:var(--text);
+  font-size:11px;
+  font-weight:800;
+  line-height:1;
+  text-shadow:
+    0 0 3px rgba(2,6,13,.96),
+    0 0 7px rgba(2,6,13,.96),
+    0 0 10px rgba(2,6,13,.96);
+  white-space:nowrap;
+  transform:translate(-50%,-50%);
+}
+
+.speed-chart-labels span.anchor-start{
+  transform:translate(0,-50%);
+}
+
+.speed-chart-labels span.anchor-end{
+  transform:translate(-100%,-50%);
 }
 
 .speed-chart-dot{
@@ -1628,7 +1662,7 @@ select,
 
           <div class="curve-panel">
             <div class="curve-head">
-              <span>最近 30 秒速度变化</span>
+              <span>最近 1 分钟速度变化</span>
               <span id="vehicleSpeedTrendMeta">波动 --</span>
             </div>
             <div class="speed-chart-wrap">
@@ -1636,7 +1670,7 @@ select,
                 class="speed-chart"
                 viewBox="0 0 320 128"
                 preserveAspectRatio="none"
-                aria-label="最近 30 秒速度变化曲线"
+                aria-label="最近 1 分钟速度变化曲线"
                 role="img"
               >
                 <line
@@ -1670,6 +1704,10 @@ select,
                   class="speed-chart-line"
                   points=""
                 ></polyline>
+                <g
+                  id="vehicleSpeedChartSamples"
+                  class="speed-chart-samples"
+                ></g>
                 <circle
                   id="vehicleSpeedChartDot"
                   class="speed-chart-dot"
@@ -1678,6 +1716,11 @@ select,
                   r="4"
                 ></circle>
               </svg>
+              <div
+                id="vehicleSpeedChartLabels"
+                class="speed-chart-labels"
+                aria-hidden="true"
+              ></div>
               <div class="speed-chart-empty" id="vehicleSpeedChartEmpty">
                 等待最近车速样本
               </div>
@@ -2191,9 +2234,10 @@ let lastValidVehicleSpeedKph=null;
 let diagnosticsPinned=false;
 let diagnosticsHideTimer=0;
 const COUNTER_WRAP=4294967296;
-const VEHICLE_SPEED_HISTORY_WINDOW_MS=30000;
-const MAX_VEHICLE_SPEED_POINTS=40;
+const VEHICLE_SPEED_HISTORY_WINDOW_MS=60000;
+const MAX_VEHICLE_SPEED_POINTS=75;
 const VEHICLE_SPEED_META_MAX_AGE_MS=30000;
+const SVG_NS='http://www.w3.org/2000/svg';
 const OTA_TRACE_POLL_MS=1200;
 const OTA_TRACE_TIMEOUT_MS=20000;
 let otaTraceTimer=0;
@@ -2452,16 +2496,98 @@ function computeVehicleAccelerationG(){
   return accelMps2/9.80665;
 }
 
+function clearSvgChildren(el){
+  while(el.firstChild)el.removeChild(el.firstChild);
+}
+
+function addVehicleSpeedLabelCandidate(candidates,index,priority){
+  const current=candidates.get(index)||0;
+  if(priority>current)candidates.set(index,priority);
+}
+
+function renderVehicleSpeedChartSamples(samplesEl,labelsEl,points,minKph,maxKph,startTime){
+  clearSvgChildren(samplesEl);
+  clearSvgChildren(labelsEl);
+
+  points.forEach(point=>{
+    const circle=document.createElementNS(SVG_NS,'circle');
+    circle.setAttribute('cx',point.x.toFixed(1));
+    circle.setAttribute('cy',point.y.toFixed(1));
+    circle.setAttribute('r','2.2');
+    samplesEl.appendChild(circle);
+  });
+
+  const candidates=new Map();
+  const lastIndex=points.length-1;
+  addVehicleSpeedLabelCandidate(candidates,0,35);
+  addVehicleSpeedLabelCandidate(candidates,lastIndex,100);
+
+  const minIndex=points.findIndex(point=>point.kph===minKph);
+  const maxIndex=points.findIndex(point=>point.kph===maxKph);
+  if(minIndex>=0)addVehicleSpeedLabelCandidate(candidates,minIndex,70);
+  if(maxIndex>=0)addVehicleSpeedLabelCandidate(candidates,maxIndex,70);
+
+  let nextTimeMark=startTime+10000;
+  points.forEach((point,index)=>{
+    const previous=points[index-1];
+    if(previous){
+      const deltaKph=Math.abs(point.kph-previous.kph);
+      if(deltaKph>=3)addVehicleSpeedLabelCandidate(candidates,index,65);
+      else if(deltaKph>=1.5)addVehicleSpeedLabelCandidate(candidates,index,50);
+    }
+    while(point.timeMs>=nextTimeMark){
+      addVehicleSpeedLabelCandidate(candidates,index,30);
+      nextTimeMark+=10000;
+    }
+  });
+
+  const selected=[];
+  Array.from(candidates.entries())
+    .map(([index,priority])=>({point:points[index],priority}))
+    .sort((a,b)=>b.priority-a.priority)
+    .forEach(candidate=>{
+      const overlapIndex=selected.findIndex(item=>Math.abs(item.point.x-candidate.point.x)<42);
+      if(overlapIndex>=0){
+        if(candidate.priority>selected[overlapIndex].priority){
+          selected.splice(overlapIndex,1,candidate);
+        }
+        return;
+      }
+      selected.push(candidate);
+    });
+
+  selected
+    .sort((a,b)=>b.priority-a.priority)
+    .slice(0,10)
+    .sort((a,b)=>a.point.x-b.point.x)
+    .forEach(({point})=>{
+      const label=document.createElement('span');
+      let y=point.y-8;
+      const x=Math.max(8,Math.min(312,point.x));
+      if(y<14)y=point.y+16;
+      label.style.left=(x/320*100).toFixed(2)+'%';
+      label.style.top=(Math.max(12,Math.min(122,y))/128*100).toFixed(2)+'%';
+      if(point.x<18)label.className='anchor-start';
+      else if(point.x>302)label.className='anchor-end';
+      label.textContent=formatVehicleSpeedValue(point.kph);
+      labelsEl.appendChild(label);
+    });
+}
+
 function updateVehicleSpeedChart(){
   const areaEl=document.getElementById('vehicleSpeedChartArea');
   const lineEl=document.getElementById('vehicleSpeedChartLine');
+  const samplesEl=document.getElementById('vehicleSpeedChartSamples');
+  const labelsEl=document.getElementById('vehicleSpeedChartLabels');
   const dotEl=document.getElementById('vehicleSpeedChartDot');
   const emptyEl=document.getElementById('vehicleSpeedChartEmpty');
-  if(!areaEl||!lineEl||!dotEl||!emptyEl)return;
+  if(!areaEl||!lineEl||!samplesEl||!labelsEl||!dotEl||!emptyEl)return;
 
   if(vehicleSpeedHistory.length<2){
     areaEl.setAttribute('d','');
     lineEl.setAttribute('points','');
+    clearSvgChildren(samplesEl);
+    clearSvgChildren(labelsEl);
     dotEl.style.opacity='0';
     emptyEl.classList.add('visible');
     setTextIfPresent('vehicleSpeedTrendMeta','波动 --');
@@ -2485,17 +2611,31 @@ function updateVehicleSpeedChart(){
     const y=bottom-((point.kph-minKph)/rangeKph)*height;
     return {
       x:Math.max(0,Math.min(width,x)),
-      y:Math.max(top,Math.min(bottom,y))
+      y:Math.max(top,Math.min(bottom,y)),
+      kph:point.kph,
+      timeMs:point.timeMs
     };
   });
 
-  const polylinePoints=points.map(point=>point.x.toFixed(1)+','+point.y.toFixed(1)).join(' ');
-  const linePath=points.map((point,index)=>(index===0?'M ':' L ')+point.x.toFixed(1)+' '+point.y.toFixed(1)).join('');
+  const steppedPoints=[];
+  points.forEach((point,index)=>{
+    if(index===0){
+      steppedPoints.push(point);
+      return;
+    }
+    const previous=points[index-1];
+    steppedPoints.push({x:point.x,y:previous.y});
+    steppedPoints.push(point);
+  });
+
+  const polylinePoints=steppedPoints.map(point=>point.x.toFixed(1)+','+point.y.toFixed(1)).join(' ');
+  const linePath=steppedPoints.map((point,index)=>(index===0?'M ':' L ')+point.x.toFixed(1)+' '+point.y.toFixed(1)).join('');
   const firstPoint=points[0];
   const lastPoint=points[points.length-1];
 
   areaEl.setAttribute('d',linePath+' L '+lastPoint.x.toFixed(1)+' '+String(bottom)+' L '+firstPoint.x.toFixed(1)+' '+String(bottom)+' Z');
   lineEl.setAttribute('points',polylinePoints);
+  renderVehicleSpeedChartSamples(samplesEl,labelsEl,points,minKph,maxKph,startTime);
   dotEl.setAttribute('cx',lastPoint.x.toFixed(1));
   dotEl.setAttribute('cy',lastPoint.y.toFixed(1));
   dotEl.style.opacity='1';
