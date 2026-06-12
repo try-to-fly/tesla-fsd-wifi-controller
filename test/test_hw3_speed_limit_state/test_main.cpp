@@ -161,7 +161,7 @@ void test_hw3_applies_smart_offset_when_fsd_is_active() {
     FakeCanDriver driver;
     cfg.chinaMode = false;
 
-    CanFrame visionFrame = makeHW3VisionFrame(20, 18);
+    CanFrame visionFrame = makeHW3VisionFrame(14, 0);
     CanFrame index0Frame = makeHW3Index0Frame(true, 8);
     CanFrame index2Frame = makeHW3Index2Frame();
     handleHW3(visionFrame, driver);
@@ -169,7 +169,8 @@ void test_hw3_applies_smart_offset_when_fsd_is_active() {
     handleHW3(index2Frame, driver);
 
     TEST_ASSERT_TRUE(cfg.fsdTriggered);
-    TEST_ASSERT_EQUAL_UINT8(10, cfg.appliedSpeedOffsetKph);
+    TEST_ASSERT_EQUAL_UINT16(70, cfg.detectedSpeedLimitKph);
+    TEST_ASSERT_EQUAL_UINT8(7, cfg.appliedSpeedOffsetKph);
     TEST_ASSERT_EQUAL_UINT(2, static_cast<unsigned int>(driver.sentFrames.size()));
     TEST_ASSERT_EQUAL_UINT16(50, decodeInjectedOffsetField(driver.sentFrames.back()));
 }
