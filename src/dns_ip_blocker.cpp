@@ -9,8 +9,7 @@
 
 namespace {
 
-constexpr size_t kBlockedIpCapacity = 64;
-constexpr size_t kAllowedIpCapacity = 96;
+constexpr size_t kBlockedIpCapacity = 48;
 constexpr size_t kRuleSnapshotBytes = 1024;
 constexpr uint32_t kIpEntryTtlSeconds = 3600;
 constexpr uint32_t kRuleResolveIntervalSeconds = 15;
@@ -23,15 +22,10 @@ struct CachedIpEntry {
 
 portMUX_TYPE gDnsIpPolicyMux = portMUX_INITIALIZER_UNLOCKED;
 CachedIpEntry gBlockedIps[kBlockedIpCapacity];
-CachedIpEntry gAllowedIps[kAllowedIpCapacity];
 size_t gBlockedIpCount = 0;
-size_t gAllowedIpCount = 0;
 char gBlocklistSnapshot[kRuleSnapshotBytes] = {};
-char gAllowlistSnapshot[kRuleSnapshotBytes] = {};
 uint32_t gLastBlockResolveAtSeconds = 0;
-uint32_t gLastAllowResolveAtSeconds = 0;
 size_t gNextBlockResolveRuleIndex = 0;
-size_t gNextAllowResolveRuleIndex = 0;
 int gPolicyEnabled = 0;
 int gStrictAllow = 0;
 
@@ -173,26 +167,21 @@ uint32_t ipAddressToHostOrder(const IPAddress& ip) {
         static_cast<uint32_t>(ip[3]);
 }
 
-void rememberIp(bool blocked, const String& domain, uint32_t ipHostOrder) {
+void rememberResolvedIp(const String& domain, uint32_t ipHostOrder) {
     uint32_t nowSeconds = millis() / 1000;
 
     portENTER_CRITICAL(&gDnsIpPolicyMux);
-    if (blocked) {
-        pruneEntriesLocked(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount, nowSeconds);
-        addOrRefreshEntryLocked(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount, domain, ipHostOrder, nowSeconds);
-    } else {
-        pruneEntriesLocked(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount, nowSeconds);
-        addOrRefreshEntryLocked(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount, domain, ipHostOrder, nowSeconds);
-    }
+    pruneEntriesLocked(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount, nowSeconds);
+    addOrRefreshEntryLocked(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount, domain, ipHostOrder, nowSeconds);
     portEXIT_CRITICAL(&gDnsIpPolicyMux);
 }
 
-void resolveAndRememberDomain(const String& domain, bool blocked) {
+void resolveAndRememberDomain(const String& domain) {
     if (domain.isEmpty()) return;
 
     IPAddress resolved;
     if (WiFi.hostByName(domain.c_str(), resolved) == 1) {
-        rememberIp(blocked, domain, ipAddressToHostOrder(resolved));
+        rememberResolvedIp(domain, ipAddressToHostOrder(resolved));
     }
 }
 
@@ -203,106 +192,68 @@ bool containsIpLocked(const CachedIpEntry* entries, size_t count, uint32_t ipHos
     return false;
 }
 
-void resolveNextRule(const char* rules, size_t& nextIndex, bool blocked) {
-    size_t ruleCount = countRules(rules);
-    if (ruleCount == 0) {
-        nextIndex = 0;
-        return;
-    }
-
-    String rule;
-    if (!getRuleByIndex(rules, nextIndex, rule)) {
-        nextIndex = 0;
-        getRuleByIndex(rules, nextIndex, rule);
-    }
-    resolveAndRememberDomain(rule, blocked);
-    nextIndex = (nextIndex + 1) % ruleCount;
-}
-
 }  // namespace
 
 extern "C" void dnsIpPolicyService(const char* allowlistRules, const char* blocklistRules, int rulesEnabled, int upstreamReady) {
     uint32_t nowSeconds = millis() / 1000;
-    bool allowlistHasRules = hasRules(allowlistRules);
     bool blocklistHasRules = hasRules(blocklistRules);
+    bool allowlistHasRules = hasRules(allowlistRules);
 
     portENTER_CRITICAL(&gDnsIpPolicyMux);
     gPolicyEnabled = rulesEnabled ? 1 : 0;
     gStrictAllow = (rulesEnabled && allowlistHasRules) ? 1 : 0;
 
-    bool allowlistChanged = !snapshotMatches(allowlistRules, gAllowlistSnapshot);
-    bool blocklistChanged = !snapshotMatches(blocklistRules, gBlocklistSnapshot);
+    bool shouldReset = !rulesEnabled || !snapshotMatches(blocklistRules, gBlocklistSnapshot);
+    bool shouldPrimeBlocklist = false;
 
-    if (!rulesEnabled) {
-        clearEntries(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount);
-        clearEntries(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount);
-        copySnapshot(gAllowlistSnapshot, sizeof(gAllowlistSnapshot), allowlistRules);
-        copySnapshot(gBlocklistSnapshot, sizeof(gBlocklistSnapshot), blocklistRules);
-        gNextAllowResolveRuleIndex = 0;
-        gNextBlockResolveRuleIndex = 0;
-        portEXIT_CRITICAL(&gDnsIpPolicyMux);
-        return;
-    }
-
-    if (allowlistChanged) {
-        clearEntries(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount);
-        copySnapshot(gAllowlistSnapshot, sizeof(gAllowlistSnapshot), allowlistRules);
-        gNextAllowResolveRuleIndex = 0;
-        gLastAllowResolveAtSeconds = 0;
-    } else {
-        pruneEntriesLocked(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount, nowSeconds);
-    }
-
-    if (blocklistChanged) {
+    if (shouldReset) {
         clearEntries(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount);
         copySnapshot(gBlocklistSnapshot, sizeof(gBlocklistSnapshot), blocklistRules);
-        gNextBlockResolveRuleIndex = 0;
         gLastBlockResolveAtSeconds = 0;
+        gNextBlockResolveRuleIndex = 0;
     } else {
         pruneEntriesLocked(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount, nowSeconds);
+        shouldPrimeBlocklist = blocklistHasRules && gBlockedIpCount == 0;
     }
     portEXIT_CRITICAL(&gDnsIpPolicyMux);
 
-    if (!upstreamReady) return;
+    if (!rulesEnabled || !upstreamReady) return;
 
-    if (allowlistHasRules && nowSeconds - gLastAllowResolveAtSeconds >= kRuleResolveIntervalSeconds) {
-        resolveNextRule(allowlistRules, gNextAllowResolveRuleIndex, false);
-        gLastAllowResolveAtSeconds = nowSeconds;
+    if (shouldReset || shouldPrimeBlocklist) {
+        gNextBlockResolveRuleIndex = 0;
     }
 
-    if (blocklistHasRules && nowSeconds - gLastBlockResolveAtSeconds >= kRuleResolveIntervalSeconds) {
-        resolveNextRule(blocklistRules, gNextBlockResolveRuleIndex, true);
-        gLastBlockResolveAtSeconds = nowSeconds;
+    if (blocklistHasRules && (shouldPrimeBlocklist || nowSeconds - gLastBlockResolveAtSeconds >= kRuleResolveIntervalSeconds)) {
+        size_t ruleCount = countRules(blocklistRules);
+        if (ruleCount > 0) {
+            String rule;
+            if (!getRuleByIndex(blocklistRules, gNextBlockResolveRuleIndex, rule)) {
+                gNextBlockResolveRuleIndex = 0;
+                getRuleByIndex(blocklistRules, gNextBlockResolveRuleIndex, rule);
+            }
+            resolveAndRememberDomain(rule);
+            gLastBlockResolveAtSeconds = nowSeconds;
+            gNextBlockResolveRuleIndex = (gNextBlockResolveRuleIndex + 1) % ruleCount;
+        }
     }
-}
-
-extern "C" void dnsIpBlockerRememberAllowedIp(const char* domain, uint32_t ipHostOrder) {
-    String normalized = normalizeDomain(domain);
-    rememberIp(false, normalized, ipHostOrder);
-}
-
-extern "C" void dnsIpBlockerRememberBlockedIp(const char* domain, uint32_t ipHostOrder) {
-    String normalized = normalizeDomain(domain);
-    rememberIp(true, normalized, ipHostOrder);
 }
 
 extern "C" void dnsIpBlockerRememberDomain(const char* domain, int upstreamReady) {
     if (!upstreamReady) return;
     String normalized = normalizeDomain(domain);
     if (normalized.isEmpty()) return;
-    resolveAndRememberDomain(normalized, true);
+    resolveAndRememberDomain(normalized);
 }
 
 extern "C" void dnsIpBlockerClear(void) {
     portENTER_CRITICAL(&gDnsIpPolicyMux);
     clearEntries(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount);
-    clearEntries(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount);
     portEXIT_CRITICAL(&gDnsIpPolicyMux);
 }
 
 extern "C" void dnsIpPolicyGetStats(uint32_t* allowCount, uint32_t* blockCount, int* strictAllow, int* enabled) {
     portENTER_CRITICAL(&gDnsIpPolicyMux);
-    if (allowCount != nullptr) *allowCount = static_cast<uint32_t>(gAllowedIpCount);
+    if (allowCount != nullptr) *allowCount = 0;
     if (blockCount != nullptr) *blockCount = static_cast<uint32_t>(gBlockedIpCount);
     if (strictAllow != nullptr) *strictAllow = gStrictAllow;
     if (enabled != nullptr) *enabled = gPolicyEnabled;
@@ -310,8 +261,6 @@ extern "C" void dnsIpPolicyGetStats(uint32_t* allowCount, uint32_t* blockCount, 
 }
 
 extern "C" int dnsHookIp4CanForward(uint32_t destAddrHostOrder) {
-    if (destAddrHostOrder == 0) return 0;
-
     uint32_t nowSeconds = millis() / 1000;
 
     portENTER_CRITICAL(&gDnsIpPolicyMux);
@@ -321,17 +270,10 @@ extern "C" int dnsHookIp4CanForward(uint32_t destAddrHostOrder) {
     }
 
     pruneEntriesLocked(gBlockedIps, kBlockedIpCapacity, gBlockedIpCount, nowSeconds);
-    pruneEntriesLocked(gAllowedIps, kAllowedIpCapacity, gAllowedIpCount, nowSeconds);
 
     if (containsIpLocked(gBlockedIps, gBlockedIpCount, destAddrHostOrder)) {
         portEXIT_CRITICAL(&gDnsIpPolicyMux);
         return 0;
-    }
-
-    if (gStrictAllow) {
-        int allowed = containsIpLocked(gAllowedIps, gAllowedIpCount, destAddrHostOrder) ? 1 : 0;
-        portEXIT_CRITICAL(&gDnsIpPolicyMux);
-        return allowed;
     }
 
     portEXIT_CRITICAL(&gDnsIpPolicyMux);

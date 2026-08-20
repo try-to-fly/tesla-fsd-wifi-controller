@@ -230,12 +230,7 @@ void DNSWhitelistServer::cacheAllowedAddressesFromResponse(const String& domain,
         if (offset + rdLength > responseLength) return;
 
         if (rrType == kDnsTypeA && rrClass == kDnsClassIN && rdLength == 4) {
-            uint32_t ipHostOrder =
-                (static_cast<uint32_t>(response[offset]) << 24) |
-                (static_cast<uint32_t>(response[offset + 1]) << 16) |
-                (static_cast<uint32_t>(response[offset + 2]) << 8) |
-                static_cast<uint32_t>(response[offset + 3]);
-            dnsIpBlockerRememberAllowedIp(domain.c_str(), ipHostOrder);
+            (void)domain;
         }
         offset += rdLength;
     }
@@ -393,6 +388,7 @@ void DNSWhitelistServer::processNextRequest(const DNSFilterConfig& cfg, bool ups
 
     if (!isAllowedDomain(cfg, domain)) {
         logBlockedRequest(domain);
+        dnsIpBlockerRememberDomain(domain.c_str(), upstreamReady ? 1 : 0);
         sendBlockedResponse(query, questionEnd, requestFlags, qType);
         return;
     }
@@ -419,12 +415,6 @@ void DNSWhitelistServer::processNextRequest(const DNSFilterConfig& cfg, bool ups
 
     IPAddress resolved;
     if (WiFi.hostByName(domain.c_str(), resolved) == 1) {
-        uint32_t ipHostOrder =
-            (static_cast<uint32_t>(resolved[0]) << 24) |
-            (static_cast<uint32_t>(resolved[1]) << 16) |
-            (static_cast<uint32_t>(resolved[2]) << 8) |
-            static_cast<uint32_t>(resolved[3]);
-        dnsIpBlockerRememberAllowedIp(domain.c_str(), ipHostOrder);
         sendIPv4Answer(query, questionEnd, requestFlags, resolved);
     } else {
         sendErrorResponse(query, questionEnd, requestFlags, 3);

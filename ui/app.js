@@ -116,7 +116,7 @@ function resetReasonClass(reason){
 
 function formatDnsPolicy(d){
   if(!d||!d.dnsPolicyEnabled)return '关闭';
-  if(d.dnsStrictAllow||d.dnsForwardPolicy==='strict-allow')return '只放行白名单';
+  if(d.dnsStrictAllow||d.dnsForwardPolicy==='strict-allow')return 'DNS 白名单';
   if(d.dnsForwardPolicy==='blocklist-only')return '仅拦黑名单';
   return '已启用';
 }

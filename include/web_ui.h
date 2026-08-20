@@ -1938,7 +1938,7 @@ select,
           <div class="dialog-card">
             <div class="card-title">规则控制</div>
             <div class="row">
-              <span class="row-label">启用网络过滤</span>
+              <span class="row-label">启用 DNS 规则</span>
               <label class="toggle"
                 ><input
                   type="checkbox"
@@ -1971,11 +1971,11 @@ select,
               ></textarea>
             </div>
             <div class="hint">
-              支持逗号、空格或换行分隔。填写 `tesla.com` 会同时匹配
+              支持逗号、空格或换行分隔。填写 `tesla.com` 会同时允许
               `api.tesla.com` 这类子域名。
             </div>
             <div class="hint">
-              开启且白名单非空：只解析并转发白名单域名，其它流量一律不转发。黑名单域名既不解析，其 IP 也强制拦截。黑名单优先于白名单。
+              黑名单优先于白名单。若白名单留空，则表示“除黑名单外全部放行”；白名单非空时，只允许解析白名单域名。
             </div>
             <div class="actions">
               <button class="save-btn" onclick="saveDns()">
@@ -2370,7 +2370,7 @@ function resetReasonClass(reason){
 
 function formatDnsPolicy(d){
   if(!d||!d.dnsPolicyEnabled)return '关闭';
-  if(d.dnsStrictAllow||d.dnsForwardPolicy==='strict-allow')return '只放行白名单';
+  if(d.dnsStrictAllow||d.dnsForwardPolicy==='strict-allow')return 'DNS 白名单';
   if(d.dnsForwardPolicy==='blocklist-only')return '仅拦黑名单';
   return '已启用';
 }
