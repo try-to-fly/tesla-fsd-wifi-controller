@@ -91,6 +91,42 @@ function getSignalClass(rssi){
   return 'status-err';
 }
 
+function formatHeap(freeHeap,minFreeHeap){
+  if(typeof freeHeap!=='number'||!Number.isFinite(freeHeap))return '--';
+  const freeText=Math.round(freeHeap/1024)+'KB';
+  if(typeof minFreeHeap==='number'&&Number.isFinite(minFreeHeap)){
+    return freeText+' / min '+Math.round(minFreeHeap/1024)+'KB';
+  }
+  return freeText;
+}
+
+function heapClass(freeHeap,minFreeHeap){
+  const value=typeof minFreeHeap==='number'&&Number.isFinite(minFreeHeap)?minFreeHeap:freeHeap;
+  if(typeof value!=='number'||!Number.isFinite(value))return 'status-no';
+  if(value<20000)return 'status-err';
+  if(value<40000)return 'status-warn';
+  return 'status-ok';
+}
+
+function resetReasonClass(reason){
+  if(!reason||reason==='poweron'||reason==='software'||reason==='ext')return 'status-ok';
+  if(reason==='unknown')return 'status-no';
+  return 'status-err';
+}
+
+function formatDnsPolicy(d){
+  if(!d||!d.dnsPolicyEnabled)return '关闭';
+  if(d.dnsStrictAllow||d.dnsForwardPolicy==='strict-allow')return '只放行白名单';
+  if(d.dnsForwardPolicy==='blocklist-only')return '仅拦黑名单';
+  return '已启用';
+}
+
+function formatDnsIpCache(d){
+  const allow=Number(d&&d.dnsAllowIpCount||0);
+  const block=Number(d&&d.dnsBlockIpCount||0);
+  return allow+' / '+block;
+}
+
 function formatActivityAge(ageMs){
   if(typeof ageMs!=='number'||!Number.isFinite(ageMs))return '--';
   if(ageMs<1000)return '不到 1 秒';
@@ -883,14 +919,21 @@ function poll(){
     setStatusText('sUpstreamSignal',d.upstreamSignal||'--',signalClass);
     setStatusText('sWiFiChannel',d.wifiChannel?String(d.wifiChannel):'--',d.wifiChannel?'status-ok':'status-no');
     setStatusText('sAPClients',String(d.apClients||0),(d.apClients||0)>1?'status-warn':'status-ok');
+    setStatusText('sAPRunning',d.apRunning?'运行中':'已停止',d.apRunning?'status-ok':'status-err');
+    setStatusText('sHeap',formatHeap(d.freeHeap,d.minFreeHeap),heapClass(d.freeHeap,d.minFreeHeap));
+    setStatusText('sResetReason',d.resetReason||'--',resetReasonClass(d.resetReason));
     setStatusText('sUpstreamIP',d.upstreamIP||'--',d.upstreamConnected?'status-ok':'status-no');
     setStatusText('sNAT',d.natStatus||'--',d.natEnabled?'status-ok':(d.upstreamConnected?'status-err':'status-no'));
-    setStatusText('sAP',d.apSSID||'--','status-ok');
+    setStatusText('sUpstreamPhase',d.upstreamPhase||'--',d.upstreamConnected?'status-ok':(d.upstreamEnable?'status-warn':'status-no'));
+    setStatusText('sUpstreamRetry',String(d.upstreamRetryCount||0),(d.upstreamRetryCount||0)>6?'status-warn':'status-ok');
+    setStatusText('sAP',d.apSSID||'--',d.apRunning?'status-ok':'status-err');
     setStatusText('sAPIP',d.apIP||'--','status-ok');
-    setWideStatusText('sDNSMode',d.dnsWhitelistEnable?'已启用':'未启用',d.dnsWhitelistEnable?'status-ok':'status-no');
+    setWideStatusText('sDNSMode',formatDnsPolicy(d),d.dnsStrictAllow?'status-ok':(d.dnsWhitelistEnable?'status-warn':'status-no'));
     setStatusText('sDNSCount',String(d.dnsWhitelistCount||0),d.dnsWhitelistCount?'status-ok':'status-no');
     setStatusText('sDNSBlockCount',String(d.dnsBlacklistCount||0),d.dnsBlacklistCount?'status-err':'status-no');
     setStatusText('sDNSBlocked',String(d.dnsBlockedCount||0),d.dnsBlockedCount?'status-err':'status-no');
+    setStatusText('sDNSPolicy',formatDnsPolicy(d),d.dnsStrictAllow?'status-ok':(d.dnsPolicyEnabled?'status-warn':'status-no'));
+    setStatusText('sDNSIpCache',formatDnsIpCache(d),(d.dnsAllowIpCount||d.dnsBlockIpCount)?'status-ok':'status-no');
     setWideStatusText('sChipTemp',formatChipTemp(d.chipTempC,d.chipTempAvgC),thermalClass);
     setWideStatusText('sThermal',d.thermalStatus||'--',thermalClass);
     latestBlockedDnsRequests=Array.isArray(d.dnsBlockedRequests)?d.dnsBlockedRequests:[];

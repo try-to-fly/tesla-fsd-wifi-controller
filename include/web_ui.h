@@ -1556,6 +1556,18 @@ select,
                   <strong id="sAPClients" class="status-no status-text">0</strong>
                 </div>
                 <div class="diag-item compact">
+                  <span>AP 状态</span>
+                  <strong id="sAPRunning" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>堆内存</span>
+                  <strong id="sHeap" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>复位原因</span>
+                  <strong id="sResetReason" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
                   <span>DNS</span>
                   <strong
                     id="sDNSMode"
@@ -1926,7 +1938,7 @@ select,
           <div class="dialog-card">
             <div class="card-title">规则控制</div>
             <div class="row">
-              <span class="row-label">启用 DNS 规则</span>
+              <span class="row-label">启用网络过滤</span>
               <label class="toggle"
                 ><input
                   type="checkbox"
@@ -1941,7 +1953,7 @@ select,
               <textarea
                 class="text-input text-area"
                 id="dnsAllowlist"
-                maxlength="384"
+                maxlength="1023"
                 placeholder="每行一个域名，例如：&#10;tesla.com&#10;apple.com"
                 oninput="markDnsDirty()"
               ></textarea>
@@ -1953,17 +1965,17 @@ select,
               <textarea
                 class="text-input text-area"
                 id="dnsBlocklist"
-                maxlength="384"
+                maxlength="1023"
                 placeholder="每行一个域名，例如：&#10;google.com&#10;doubleclick.net"
                 oninput="markDnsDirty()"
               ></textarea>
             </div>
             <div class="hint">
-              支持逗号、空格或换行分隔。填写 `tesla.com` 会同时允许
+              支持逗号、空格或换行分隔。填写 `tesla.com` 会同时匹配
               `api.tesla.com` 这类子域名。
             </div>
             <div class="hint">
-              黑名单优先于白名单。若白名单留空，则表示“除黑名单外全部放行”；白名单非空时，只允许解析白名单域名。
+              开启且白名单非空：只解析并转发白名单域名，其它流量一律不转发。黑名单域名既不解析，其 IP 也强制拦截。黑名单优先于白名单。
             </div>
             <div class="actions">
               <button class="save-btn" onclick="saveDns()">
@@ -1978,6 +1990,14 @@ select,
             <div class="status-row">
               <span>黑名单数量</span
               ><span id="sDNSBlockCount" class="status-no status-text">0</span>
+            </div>
+            <div class="status-row">
+              <span>转发策略</span
+              ><span id="sDNSPolicy" class="status-no status-text">--</span>
+            </div>
+            <div class="status-row">
+              <span>放行 IP / 拦截 IP</span
+              ><span id="sDNSIpCache" class="status-no status-text">--</span>
             </div>
             <div class="hint">
               首页会实时显示 DNS
@@ -2151,6 +2171,18 @@ select,
                 <span>NAT 转发</span
                 ><span id="sNAT" class="status-no status-text">--</span>
               </div>
+              <div class="status-row">
+                <span>上游阶段</span
+                ><span id="sUpstreamPhase" class="status-no status-text"
+                  >--</span
+                >
+              </div>
+              <div class="status-row">
+                <span>上游重试</span
+                ><span id="sUpstreamRetry" class="status-no status-text"
+                  >0</span
+                >
+              </div>
             </div>
           </div>
         </div>
@@ -2311,6 +2343,42 @@ function getSignalClass(rssi){
   if(rssi>=-67)return 'status-ok';
   if(rssi>=-75)return 'status-warn';
   return 'status-err';
+}
+
+function formatHeap(freeHeap,minFreeHeap){
+  if(typeof freeHeap!=='number'||!Number.isFinite(freeHeap))return '--';
+  const freeText=Math.round(freeHeap/1024)+'KB';
+  if(typeof minFreeHeap==='number'&&Number.isFinite(minFreeHeap)){
+    return freeText+' / min '+Math.round(minFreeHeap/1024)+'KB';
+  }
+  return freeText;
+}
+
+function heapClass(freeHeap,minFreeHeap){
+  const value=typeof minFreeHeap==='number'&&Number.isFinite(minFreeHeap)?minFreeHeap:freeHeap;
+  if(typeof value!=='number'||!Number.isFinite(value))return 'status-no';
+  if(value<20000)return 'status-err';
+  if(value<40000)return 'status-warn';
+  return 'status-ok';
+}
+
+function resetReasonClass(reason){
+  if(!reason||reason==='poweron'||reason==='software'||reason==='ext')return 'status-ok';
+  if(reason==='unknown')return 'status-no';
+  return 'status-err';
+}
+
+function formatDnsPolicy(d){
+  if(!d||!d.dnsPolicyEnabled)return '关闭';
+  if(d.dnsStrictAllow||d.dnsForwardPolicy==='strict-allow')return '只放行白名单';
+  if(d.dnsForwardPolicy==='blocklist-only')return '仅拦黑名单';
+  return '已启用';
+}
+
+function formatDnsIpCache(d){
+  const allow=Number(d&&d.dnsAllowIpCount||0);
+  const block=Number(d&&d.dnsBlockIpCount||0);
+  return allow+' / '+block;
 }
 
 function formatActivityAge(ageMs){
@@ -3105,14 +3173,21 @@ function poll(){
     setStatusText('sUpstreamSignal',d.upstreamSignal||'--',signalClass);
     setStatusText('sWiFiChannel',d.wifiChannel?String(d.wifiChannel):'--',d.wifiChannel?'status-ok':'status-no');
     setStatusText('sAPClients',String(d.apClients||0),(d.apClients||0)>1?'status-warn':'status-ok');
+    setStatusText('sAPRunning',d.apRunning?'运行中':'已停止',d.apRunning?'status-ok':'status-err');
+    setStatusText('sHeap',formatHeap(d.freeHeap,d.minFreeHeap),heapClass(d.freeHeap,d.minFreeHeap));
+    setStatusText('sResetReason',d.resetReason||'--',resetReasonClass(d.resetReason));
     setStatusText('sUpstreamIP',d.upstreamIP||'--',d.upstreamConnected?'status-ok':'status-no');
     setStatusText('sNAT',d.natStatus||'--',d.natEnabled?'status-ok':(d.upstreamConnected?'status-err':'status-no'));
-    setStatusText('sAP',d.apSSID||'--','status-ok');
+    setStatusText('sUpstreamPhase',d.upstreamPhase||'--',d.upstreamConnected?'status-ok':(d.upstreamEnable?'status-warn':'status-no'));
+    setStatusText('sUpstreamRetry',String(d.upstreamRetryCount||0),(d.upstreamRetryCount||0)>6?'status-warn':'status-ok');
+    setStatusText('sAP',d.apSSID||'--',d.apRunning?'status-ok':'status-err');
     setStatusText('sAPIP',d.apIP||'--','status-ok');
-    setWideStatusText('sDNSMode',d.dnsWhitelistEnable?'已启用':'未启用',d.dnsWhitelistEnable?'status-ok':'status-no');
+    setWideStatusText('sDNSMode',formatDnsPolicy(d),d.dnsStrictAllow?'status-ok':(d.dnsWhitelistEnable?'status-warn':'status-no'));
     setStatusText('sDNSCount',String(d.dnsWhitelistCount||0),d.dnsWhitelistCount?'status-ok':'status-no');
     setStatusText('sDNSBlockCount',String(d.dnsBlacklistCount||0),d.dnsBlacklistCount?'status-err':'status-no');
     setStatusText('sDNSBlocked',String(d.dnsBlockedCount||0),d.dnsBlockedCount?'status-err':'status-no');
+    setStatusText('sDNSPolicy',formatDnsPolicy(d),d.dnsStrictAllow?'status-ok':(d.dnsPolicyEnabled?'status-warn':'status-no'));
+    setStatusText('sDNSIpCache',formatDnsIpCache(d),(d.dnsAllowIpCount||d.dnsBlockIpCount)?'status-ok':'status-no');
     setWideStatusText('sChipTemp',formatChipTemp(d.chipTempC,d.chipTempAvgC),thermalClass);
     setWideStatusText('sThermal',d.thermalStatus||'--',thermalClass);
     latestBlockedDnsRequests=Array.isArray(d.dnsBlockedRequests)?d.dnsBlockedRequests:[];

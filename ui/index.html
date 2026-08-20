@@ -102,6 +102,18 @@
                   <strong id="sAPClients" class="status-no status-text">0</strong>
                 </div>
                 <div class="diag-item compact">
+                  <span>AP 状态</span>
+                  <strong id="sAPRunning" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>堆内存</span>
+                  <strong id="sHeap" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
+                  <span>复位原因</span>
+                  <strong id="sResetReason" class="status-no status-text">--</strong>
+                </div>
+                <div class="diag-item compact">
                   <span>DNS</span>
                   <strong
                     id="sDNSMode"
@@ -472,7 +484,7 @@
           <div class="dialog-card">
             <div class="card-title">规则控制</div>
             <div class="row">
-              <span class="row-label">启用 DNS 规则</span>
+              <span class="row-label">启用网络过滤</span>
               <label class="toggle"
                 ><input
                   type="checkbox"
@@ -487,7 +499,7 @@
               <textarea
                 class="text-input text-area"
                 id="dnsAllowlist"
-                maxlength="384"
+                maxlength="1023"
                 placeholder="每行一个域名，例如：&#10;tesla.com&#10;apple.com"
                 oninput="markDnsDirty()"
               ></textarea>
@@ -499,17 +511,17 @@
               <textarea
                 class="text-input text-area"
                 id="dnsBlocklist"
-                maxlength="384"
+                maxlength="1023"
                 placeholder="每行一个域名，例如：&#10;google.com&#10;doubleclick.net"
                 oninput="markDnsDirty()"
               ></textarea>
             </div>
             <div class="hint">
-              支持逗号、空格或换行分隔。填写 `tesla.com` 会同时允许
+              支持逗号、空格或换行分隔。填写 `tesla.com` 会同时匹配
               `api.tesla.com` 这类子域名。
             </div>
             <div class="hint">
-              黑名单优先于白名单。若白名单留空，则表示“除黑名单外全部放行”；白名单非空时，只允许解析白名单域名。
+              开启且白名单非空：只解析并转发白名单域名，其它流量一律不转发。黑名单域名既不解析，其 IP 也强制拦截。黑名单优先于白名单。
             </div>
             <div class="actions">
               <button class="save-btn" onclick="saveDns()">
@@ -524,6 +536,14 @@
             <div class="status-row">
               <span>黑名单数量</span
               ><span id="sDNSBlockCount" class="status-no status-text">0</span>
+            </div>
+            <div class="status-row">
+              <span>转发策略</span
+              ><span id="sDNSPolicy" class="status-no status-text">--</span>
+            </div>
+            <div class="status-row">
+              <span>放行 IP / 拦截 IP</span
+              ><span id="sDNSIpCache" class="status-no status-text">--</span>
             </div>
             <div class="hint">
               首页会实时显示 DNS
@@ -696,6 +716,18 @@
               <div class="status-row">
                 <span>NAT 转发</span
                 ><span id="sNAT" class="status-no status-text">--</span>
+              </div>
+              <div class="status-row">
+                <span>上游阶段</span
+                ><span id="sUpstreamPhase" class="status-no status-text"
+                  >--</span
+                >
+              </div>
+              <div class="status-row">
+                <span>上游重试</span
+                ><span id="sUpstreamRetry" class="status-no status-text"
+                  >0</span
+                >
               </div>
             </div>
           </div>

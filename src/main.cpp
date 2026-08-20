@@ -14,8 +14,8 @@
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
 #include <Preferences.h>
-#include <SPIFFS.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <freertos/semphr.h>
 
 #include "lwip/lwip_napt.h"
@@ -35,9 +35,12 @@ static const IPAddress AP_IP(9, 9, 9, 9);
 static const IPAddress AP_GATEWAY(9, 9, 9, 9);
 static const IPAddress AP_SUBNET(255, 255, 255, 0);
 static constexpr uint32_t AP_CONFIG_APPLY_DELAY_MS = 800;
-static constexpr uint32_t UPSTREAM_RETRY_MS = 15000;
-static constexpr uint32_t UPSTREAM_FAILURE_RETRY_MS = 3000;
+static constexpr uint32_t AP_RESTART_MIN_INTERVAL_MS = 8000;
+static constexpr uint32_t AP_HEALTH_CHECK_MS = 10000;
+static constexpr uint32_t UPSTREAM_CONNECT_TIMEOUT_MS = 15000;
 static constexpr uint32_t UPSTREAM_RETRY_THROTTLED_MS = 60000;
+static constexpr uint8_t UPSTREAM_BACKOFF_STEPS = 4;
+static constexpr uint32_t UPSTREAM_BACKOFF_MS[UPSTREAM_BACKOFF_STEPS] = {3000, 5000, 15000, 60000};
 static constexpr uint8_t MAX_UPSTREAM_NETWORKS = 10;
 static constexpr uint8_t MAX_SCAN_RESULTS = 12;
 static constexpr uint32_t THERMAL_SAMPLE_MS = 5000;
@@ -50,9 +53,7 @@ static constexpr float CHIP_TEMP_THROTTLE_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_PROTECT_CLEAR_C = 72.0f;
 static constexpr float CHIP_TEMP_EMA_ALPHA = 0.25f;
 static constexpr uint32_t DEBUG_HEARTBEAT_MS = 3000;
-static constexpr size_t DEBUG_LOG_MAX_BYTES = 48 * 1024;
-static constexpr size_t DEBUG_LOG_RETAIN_BYTES = 24 * 1024;
-static constexpr const char* DEBUG_LOG_PATH = "/debug.log";
+static constexpr size_t DEBUG_LOG_CAPACITY = 16 * 1024;
 static constexpr uint32_t OTA_STATUS_STALE_MS = 8000;
 static constexpr uint32_t OTA_RESTART_DELAY_MS = 1500;
 
@@ -64,6 +65,9 @@ static DNSWhitelistServer dnsServer;
 static volatile bool  otaPendingRestart = false;
 static bool           natEnabled = false;
 static volatile size_t debugLogCachedBytes = 0;
+static char           debugLogBuf[DEBUG_LOG_CAPACITY];
+static size_t         debugLogHead = 0;
+static size_t         debugLogUsed = 0;
 
 struct LocalAPConfig {
     char ssid[33] = "FSD-Controller";
@@ -94,8 +98,32 @@ struct UpstreamWiFiConfig {
     uint32_t             lastAttemptMillis   = 0;
 };
 
+enum class UpstreamConnectPhase : uint8_t {
+    Idle = 0,
+    Scanning,
+    Connecting,
+    Connected,
+    Backoff
+};
+
+struct UpstreamRuntime {
+    UpstreamConnectPhase phase = UpstreamConnectPhase::Idle;
+    uint32_t lastAttemptMillis = 0;
+    uint32_t connectStartedMillis = 0;
+    uint8_t backoffIndex = 0;
+    uint32_t retryCount = 0;
+    int lastDisconnectReason = 0;
+};
+
 static UpstreamWiFiConfig wifiCfg;
+static UpstreamRuntime upstreamRt;
 static volatile bool upstreamScanInProgress = false;
+static volatile bool apStarted = false;
+static volatile bool apRestartRequested = false;
+static bool apApplyInProgress = false;
+static uint32_t lastApRestartMillis = 0;
+static uint32_t lastApHealthCheckMillis = 0;
+static esp_reset_reason_t bootResetReason = ESP_RST_UNKNOWN;
 static LocalAPConfig apCfg;
 static SemaphoreHandle_t debugLogMutex = nullptr;
 static bool debugLogReady = false;
@@ -149,6 +177,13 @@ static ThermalStatus thermalStatus;
 #define PIN_LED 2   // ESP32 DevKit onboard LED
 #endif
 
+#ifndef WIFI_SCAN_RUNNING
+#define WIFI_SCAN_RUNNING (-1)
+#endif
+#ifndef WIFI_SCAN_FAILED
+#define WIFI_SCAN_FAILED (-2)
+#endif
+
 const char* getTwaiStateName(twai_state_t state) {
     switch (state) {
         case TWAI_STATE_STOPPED:    return "STOPPED";
@@ -156,6 +191,34 @@ const char* getTwaiStateName(twai_state_t state) {
         case TWAI_STATE_BUS_OFF:    return "BUS_OFF";
         case TWAI_STATE_RECOVERING: return "RECOVERING";
         default:                    return "UNKNOWN";
+    }
+}
+
+const char* getResetReasonName(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON:   return "poweron";
+        case ESP_RST_EXT:       return "ext";
+        case ESP_RST_SW:        return "software";
+        case ESP_RST_PANIC:     return "panic";
+        case ESP_RST_INT_WDT:   return "int-wdt";
+        case ESP_RST_TASK_WDT:  return "task-wdt";
+        case ESP_RST_WDT:       return "wdt";
+        case ESP_RST_DEEPSLEEP: return "deepsleep";
+        case ESP_RST_BROWNOUT:  return "brownout";
+        case ESP_RST_SDIO:      return "sdio";
+        default:                return "unknown";
+    }
+}
+
+const char* getUpstreamPhaseName(UpstreamConnectPhase phase) {
+    switch (phase) {
+        case UpstreamConnectPhase::Scanning:   return "scanning";
+        case UpstreamConnectPhase::Connecting: return "connecting";
+        case UpstreamConnectPhase::Connected:  return "connected";
+        case UpstreamConnectPhase::Backoff:    return "backoff";
+        case UpstreamConnectPhase::Idle:
+        default:
+            return "idle";
     }
 }
 
@@ -368,36 +431,22 @@ void unlockDebugLog() {
     if (debugLogMutex != nullptr) xSemaphoreGive(debugLogMutex);
 }
 
-size_t trimDebugLogLocked() {
-    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
-    if (!file) return 0;
-
-    size_t size = file.size();
-    if (size <= DEBUG_LOG_MAX_BYTES) {
-        file.close();
-        return size;
+void appendDebugLogBytesLocked(const char* data, size_t length) {
+    if (data == nullptr || length == 0) return;
+    if (length > DEBUG_LOG_CAPACITY) {
+        data += length - DEBUG_LOG_CAPACITY;
+        length = DEBUG_LOG_CAPACITY;
     }
 
-    size_t start = size > DEBUG_LOG_RETAIN_BYTES ? size - DEBUG_LOG_RETAIN_BYTES : 0;
-    if (start > 0) {
-        file.seek(start);
-        while (file.available()) {
-            if (file.read() == '\n') break;
+    for (size_t i = 0; i < length; ++i) {
+        debugLogBuf[debugLogHead] = data[i];
+        debugLogHead = (debugLogHead + 1) % DEBUG_LOG_CAPACITY;
+        if (debugLogUsed < DEBUG_LOG_CAPACITY) {
+            ++debugLogUsed;
         }
     }
 
-    String tail;
-    tail.reserve(DEBUG_LOG_RETAIN_BYTES + 64);
-    while (file.available()) {
-        tail += static_cast<char>(file.read());
-    }
-    file.close();
-
-    File out = SPIFFS.open(DEBUG_LOG_PATH, FILE_WRITE);
-    if (!out) return size;
-    out.print(tail);
-    out.close();
-    return tail.length();
+    debugLogCachedBytes = debugLogUsed;
 }
 
 void appendDebugLogRecord(const char* tag, const String& body) {
@@ -413,42 +462,29 @@ void appendDebugLogRecord(const char* tag, const String& body) {
     line += body;
     line += "\n";
 
-    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_APPEND);
-    if (file) {
-        file.print(line);
-        file.close();
-        debugLogCachedBytes = trimDebugLogLocked();
-    }
-
+    appendDebugLogBytesLocked(line.c_str(), line.length());
     unlockDebugLog();
 }
 
 size_t getDebugLogSizeBytes() {
-    if (!debugLogReady || !lockDebugLog()) return 0;
-
-    size_t size = 0;
-    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
-    if (file) {
-        size = file.size();
-        file.close();
-    }
-
-    unlockDebugLog();
-    return size;
+    return debugLogReady ? static_cast<size_t>(debugLogCachedBytes) : 0;
 }
 
 String readDebugLogText() {
     if (!debugLogReady || !lockDebugLog()) return "";
 
     String content;
-    File file = SPIFFS.open(DEBUG_LOG_PATH, FILE_READ);
-    if (file) {
-        size_t size = file.size();
-        content.reserve(size + 1);
-        while (file.available()) {
-            content += static_cast<char>(file.read());
-        }
-        file.close();
+    if (debugLogUsed == 0) {
+        unlockDebugLog();
+        return content;
+    }
+
+    content.reserve(debugLogUsed + 1);
+    if (debugLogUsed == DEBUG_LOG_CAPACITY) {
+        content += String(debugLogBuf + debugLogHead, DEBUG_LOG_CAPACITY - debugLogHead);
+        if (debugLogHead > 0) content += String(debugLogBuf, debugLogHead);
+    } else {
+        content += String(debugLogBuf, debugLogUsed);
     }
 
     unlockDebugLog();
@@ -457,7 +493,8 @@ String readDebugLogText() {
 
 void clearDebugLogStorage() {
     if (!debugLogReady || !lockDebugLog()) return;
-    SPIFFS.remove(DEBUG_LOG_PATH);
+    debugLogHead = 0;
+    debugLogUsed = 0;
     debugLogCachedBytes = 0;
     unlockDebugLog();
 }
@@ -686,9 +723,16 @@ String buildBlockedDnsRequestsJson(uint32_t& totalBlockedCount, size_t& recentBl
     return json;
 }
 
+void requestLocalAPRestart(const char* reason) {
+    if (apApplyInProgress) return;
+    apRestartRequested = true;
+    ESP_LOGI(TAG, "AP restart requested (%s)", reason ? reason : "unknown");
+}
+
 void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_AP_START:
+            apStarted = true;
             ESP_LOGI(
                 TAG,
                 "wifi AP started ssid=%s ip=%s channel=%d",
@@ -698,7 +742,9 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
             );
             break;
         case ARDUINO_EVENT_WIFI_AP_STOP:
+            apStarted = false;
             ESP_LOGW(TAG, "wifi AP stopped");
+            if (!apApplyInProgress) requestLocalAPRestart("ap-stop");
             break;
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
         case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
@@ -723,12 +769,14 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
                 "wifi STA got ip=%s",
                 IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str()
             );
+            requestLocalAPRestart("sta-got-ip");
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            upstreamRt.lastDisconnectReason = static_cast<int>(info.wifi_sta_disconnected.reason);
             ESP_LOGW(
                 TAG,
                 "wifi STA disconnected reason=%d",
-                static_cast<int>(info.wifi_sta_disconnected.reason)
+                upstreamRt.lastDisconnectReason
             );
             break;
         default:
@@ -756,7 +804,7 @@ void logRuntimeHeartbeat() {
 
     ESP_LOGI(
         TAG,
-        "beat rx=%lu mod=%lu err=%lu fsdTrig=%d fsdEn=%d hw=%u china=%d apClients=%u apIP=%s sta=%d staSSID=%s staIP=%s twai=%s rxErr=%lu txErr=%lu busErr=%lu rxMiss=%lu txFail=%lu",
+        "beat rx=%lu mod=%lu err=%lu fsdTrig=%d fsdEn=%d hw=%u china=%d apClients=%u apIP=%s apRun=%d sta=%d staSSID=%s staIP=%s phase=%s retry=%lu disc=%d heap=%u minHeap=%u rst=%s twai=%s rxErr=%lu txErr=%lu busErr=%lu rxMiss=%lu txFail=%lu",
         static_cast<unsigned long>(cfg.rxCount),
         static_cast<unsigned long>(cfg.modifiedCount),
         static_cast<unsigned long>(cfg.errorCount),
@@ -766,9 +814,16 @@ void logRuntimeHeartbeat() {
         static_cast<int>(cfg.chinaMode),
         static_cast<unsigned>(WiFi.softAPgetStationNum()),
         WiFi.softAPIP().toString().c_str(),
+        apStarted ? 1 : 0,
         static_cast<int>(staStatus),
         staSSID.isEmpty() ? "-" : staSSID.c_str(),
         staIP.c_str(),
+        getUpstreamPhaseName(upstreamRt.phase),
+        static_cast<unsigned long>(upstreamRt.retryCount),
+        upstreamRt.lastDisconnectReason,
+        static_cast<unsigned>(ESP.getFreeHeap()),
+        static_cast<unsigned>(ESP.getMinFreeHeap()),
+        getResetReasonName(bootResetReason),
         getTwaiStateName(twaiStatus.state),
         static_cast<unsigned long>(twaiStatus.rx_error_counter),
         static_cast<unsigned long>(twaiStatus.tx_error_counter),
@@ -778,85 +833,93 @@ void logRuntimeHeartbeat() {
     );
 }
 
+int fillUniqueScanResults(int foundCount, UpstreamScanResult* results, size_t maxResults) {
+    int uniqueCount = 0;
+    if (foundCount <= 0 || results == nullptr || maxResults == 0) return 0;
+
+    for (int i = 0; i < foundCount; ++i) {
+        String ssid = WiFi.SSID(i);
+        ssid.trim();
+
+        if (ssid.isEmpty() || isReservedUpstreamSSID(ssid)) continue;
+
+        int existing = -1;
+        for (int j = 0; j < uniqueCount; ++j) {
+            if (ssid.equals(results[j].ssid)) {
+                existing = j;
+                break;
+            }
+        }
+
+        int32_t rssi = WiFi.RSSI(i);
+        bool secure = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+        bool saved = findSavedUpstreamNetwork(ssid) >= 0;
+
+        if (existing >= 0) {
+            if (rssi > results[existing].rssi) {
+                copyStringToBuffer(results[existing].ssid, sizeof(results[existing].ssid), ssid);
+                results[existing].rssi = rssi;
+                results[existing].secure = secure;
+                results[existing].saved = saved;
+            }
+            continue;
+        }
+
+        if (uniqueCount >= static_cast<int>(maxResults)) continue;
+
+        copyStringToBuffer(results[uniqueCount].ssid, sizeof(results[uniqueCount].ssid), ssid);
+        results[uniqueCount].rssi = rssi;
+        results[uniqueCount].secure = secure;
+        results[uniqueCount].saved = saved;
+        ++uniqueCount;
+    }
+
+    for (int i = 0; i < uniqueCount - 1; ++i) {
+        for (int j = i + 1; j < uniqueCount; ++j) {
+            if (results[j].rssi > results[i].rssi) {
+                UpstreamScanResult tmp = results[i];
+                results[i] = results[j];
+                results[j] = tmp;
+            }
+        }
+    }
+
+    return uniqueCount;
+}
+
+bool isUpstreamRadioBusy() {
+    return upstreamRt.phase == UpstreamConnectPhase::Scanning
+        || upstreamRt.phase == UpstreamConnectPhase::Connecting
+        || upstreamScanInProgress;
+}
+
 int performUpstreamScan(UpstreamScanResult* results, size_t maxResults) {
-    if (upstreamScanInProgress) return -1;
+    if (isUpstreamRadioBusy()) return -1;
     upstreamScanInProgress = true;
 
     WiFi.scanDelete();
     int foundCount = WiFi.scanNetworks(false, true);
-    int uniqueCount = 0;
-
-    if (foundCount > 0) {
-        for (int i = 0; i < foundCount; ++i) {
-            String ssid = WiFi.SSID(i);
-            ssid.trim();
-
-            if (ssid.isEmpty() || isReservedUpstreamSSID(ssid)) continue;
-
-            int existing = -1;
-            for (int j = 0; j < uniqueCount; ++j) {
-                if (ssid.equals(results[j].ssid)) {
-                    existing = j;
-                    break;
-                }
-            }
-
-            int32_t rssi = WiFi.RSSI(i);
-            bool secure = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
-            bool saved = findSavedUpstreamNetwork(ssid) >= 0;
-
-            if (existing >= 0) {
-                if (rssi > results[existing].rssi) {
-                    copyStringToBuffer(results[existing].ssid, sizeof(results[existing].ssid), ssid);
-                    results[existing].rssi = rssi;
-                    results[existing].secure = secure;
-                    results[existing].saved = saved;
-                }
-                continue;
-            }
-
-            if (uniqueCount >= static_cast<int>(maxResults)) continue;
-
-            copyStringToBuffer(results[uniqueCount].ssid, sizeof(results[uniqueCount].ssid), ssid);
-            results[uniqueCount].rssi = rssi;
-            results[uniqueCount].secure = secure;
-            results[uniqueCount].saved = saved;
-            ++uniqueCount;
-        }
-
-        for (int i = 0; i < uniqueCount - 1; ++i) {
-            for (int j = i + 1; j < uniqueCount; ++j) {
-                if (results[j].rssi > results[i].rssi) {
-                    UpstreamScanResult tmp = results[i];
-                    results[i] = results[j];
-                    results[j] = tmp;
-                }
-            }
-        }
-    }
+    int uniqueCount = fillUniqueScanResults(foundCount, results, maxResults);
 
     WiFi.scanDelete();
     upstreamScanInProgress = false;
     return uniqueCount;
 }
 
-int selectNextUpstreamNetworkIndex() {
-    if (!hasUpstreamCredentials()) return -1;
-
-    UpstreamScanResult results[MAX_SCAN_RESULTS];
-    int scanCount = performUpstreamScan(results, MAX_SCAN_RESULTS);
-
-    if (scanCount > 0) {
-        for (int i = 0; i < scanCount; ++i) {
-            int index = findSavedUpstreamNetwork(String(results[i].ssid));
-            if (index >= 0) return index;
-        }
+int pickSavedNetworkFromScan(const UpstreamScanResult* results, int scanCount) {
+    if (results == nullptr || scanCount <= 0) return -1;
+    for (int i = 0; i < scanCount; ++i) {
+        int index = findSavedUpstreamNetwork(String(results[i].ssid));
+        if (index >= 0) return index;
     }
+    return -1;
+}
 
+int pickRoundRobinUpstreamNetworkIndex() {
+    if (!hasUpstreamCredentials()) return -1;
     if (wifiCfg.nextTryIndex >= wifiCfg.networkCount) {
         wifiCfg.nextTryIndex = 0;
     }
-
     int selectedIndex = wifiCfg.nextTryIndex;
     wifiCfg.nextTryIndex = (wifiCfg.nextTryIndex + 1) % wifiCfg.networkCount;
     return selectedIndex;
@@ -977,9 +1040,17 @@ const char* getUpstreamStatusText() {
     if (!wifiCfg.enabled)          return "未启用";
     if (!hasUpstreamCredentials()) return "未配置热点";
     if (isThermalProtectionActive()) return "过热保护中";
+    if (WiFi.status() == WL_CONNECTED) return "已连接";
+
+    switch (upstreamRt.phase) {
+        case UpstreamConnectPhase::Scanning:   return "正在扫描";
+        case UpstreamConnectPhase::Connecting: return "连接中";
+        case UpstreamConnectPhase::Backoff:    return "等待重试";
+        default:
+            break;
+    }
 
     switch (WiFi.status()) {
-        case WL_CONNECTED:       return "已连接";
         case WL_NO_SSID_AVAIL:   return "找不到热点";
         case WL_CONNECT_FAILED:  return "连接失败";
         case WL_CONNECTION_LOST: return "连接丢失";
@@ -1012,30 +1083,100 @@ void requestLocalAPApply() {
     apCfg.applyAtMillis = millis() + AP_CONFIG_APPLY_DELAY_MS;
 }
 
+void resetUpstreamRuntime(bool clearBackoff) {
+    WiFi.scanDelete();
+    upstreamScanInProgress = false;
+    upstreamRt.phase = UpstreamConnectPhase::Idle;
+    wifiCfg.activeIndex = -1;
+    if (clearBackoff) {
+        upstreamRt.backoffIndex = 0;
+        upstreamRt.retryCount = 0;
+        wifiCfg.nextTryIndex = 0;
+    }
+    upstreamRt.connectStartedMillis = 0;
+}
+
+void markUpstreamConnected() {
+    int connectedIndex = findSavedUpstreamNetwork(WiFi.SSID());
+    if (connectedIndex >= 0) wifiCfg.activeIndex = connectedIndex;
+    upstreamRt.phase = UpstreamConnectPhase::Connected;
+    upstreamRt.backoffIndex = 0;
+    wifiCfg.lastAttemptMillis = millis();
+    upstreamRt.lastAttemptMillis = wifiCfg.lastAttemptMillis;
+}
+
+uint32_t currentUpstreamBackoffMs() {
+    uint8_t index = upstreamRt.backoffIndex;
+    if (index >= UPSTREAM_BACKOFF_STEPS) index = UPSTREAM_BACKOFF_STEPS - 1;
+    uint32_t backoffMs = UPSTREAM_BACKOFF_MS[index];
+    if (isThermalThrottleActive() && backoffMs < UPSTREAM_RETRY_THROTTLED_MS) {
+        backoffMs = UPSTREAM_RETRY_THROTTLED_MS;
+    }
+    return backoffMs;
+}
+
+void enterUpstreamBackoff(const char* reason) {
+    WiFi.scanDelete();
+    upstreamScanInProgress = false;
+    uint32_t delayMs = currentUpstreamBackoffMs();
+    if (upstreamRt.backoffIndex + 1 < UPSTREAM_BACKOFF_STEPS) {
+        ++upstreamRt.backoffIndex;
+    }
+    upstreamRt.phase = UpstreamConnectPhase::Backoff;
+    uint32_t now = millis();
+    wifiCfg.lastAttemptMillis = now;
+    upstreamRt.lastAttemptMillis = now;
+    ESP_LOGW(
+        TAG,
+        "upstream backoff reason=%s delay=%ums retry=%lu disc=%d",
+        reason ? reason : "unknown",
+        static_cast<unsigned>(delayMs),
+        static_cast<unsigned long>(upstreamRt.retryCount),
+        upstreamRt.lastDisconnectReason
+    );
+    if (debugLogReady) {
+        String line;
+        line.reserve(80);
+        line += reason ? reason : "unknown";
+        line += " delay=";
+        line += String(static_cast<unsigned>(delayMs));
+        line += " retry=";
+        line += String(static_cast<unsigned>(upstreamRt.retryCount));
+        line += " disc=";
+        line += String(upstreamRt.lastDisconnectReason);
+        appendDebugLogRecord("WIFI", line);
+    }
+}
+
 bool applyLocalAPConfig() {
+    apApplyInProgress = true;
     WiFi.softAPdisconnect(false);
     delay(100);
     WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
     bool ok = WiFi.softAP(apCfg.ssid, apCfg.pass);
+    apApplyInProgress = false;
+    lastApRestartMillis = millis();
+    apRestartRequested = false;
+    apStarted = ok;
     if (ok) {
-        ESP_LOGI(TAG, "local AP ready ssid=%s ip=%s", apCfg.ssid, WiFi.softAPIP().toString().c_str());
+        ESP_LOGI(TAG, "local AP ready ssid=%s ip=%s channel=%d", apCfg.ssid, WiFi.softAPIP().toString().c_str(), WiFi.channel());
         Serial.printf("WiFi AP: %s  IP: %s\n", apCfg.ssid, WiFi.softAPIP().toString().c_str());
+        if (WiFi.status() == WL_CONNECTED) {
+            ip_napt_enable(static_cast<u32_t>(AP_IP), 1);
+            natEnabled = true;
+        }
     } else {
         ESP_LOGE(TAG, "local AP start failed ssid=%s", apCfg.ssid);
         Serial.printf("WiFi AP restart failed for SSID: %s\n", apCfg.ssid);
+        requestLocalAPRestart("ap-start-failed");
     }
     return ok;
 }
 
-void startUpstreamConnect() {
-    if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
-
-    int networkIndex = selectNextUpstreamNetworkIndex();
+void beginUpstreamConnect(int networkIndex) {
     if (networkIndex < 0 || networkIndex >= wifiCfg.networkCount) {
         wifiCfg.activeIndex = -1;
-        wifiCfg.lastAttemptMillis = millis();
-        ESP_LOGW(TAG, "no upstream hotspot available");
-        Serial.println("No upstream hotspot available");
+        enterUpstreamBackoff("no-network");
         return;
     }
 
@@ -1043,7 +1184,13 @@ void startUpstreamConnect() {
     wifiCfg.nextTryIndex = (networkIndex + 1) % wifiCfg.networkCount;
 
     const SavedUpstreamNetwork& network = wifiCfg.networks[networkIndex];
-    ESP_LOGI(TAG, "connecting upstream WiFi ssid=%s", network.ssid);
+    ++upstreamRt.retryCount;
+    ESP_LOGI(
+        TAG,
+        "connecting upstream WiFi ssid=%s retry=%lu",
+        network.ssid,
+        static_cast<unsigned long>(upstreamRt.retryCount)
+    );
     Serial.printf("Connecting upstream WiFi: %s\n", network.ssid);
     WiFi.disconnect(false, false);
     if (network.pass[0] != '\0') {
@@ -1051,15 +1198,77 @@ void startUpstreamConnect() {
     } else {
         WiFi.begin(network.ssid);
     }
-    wifiCfg.lastAttemptMillis = millis();
+    uint32_t now = millis();
+    wifiCfg.lastAttemptMillis = now;
+    upstreamRt.lastAttemptMillis = now;
+    upstreamRt.connectStartedMillis = now;
+    upstreamRt.phase = UpstreamConnectPhase::Connecting;
+}
+
+void finishUpstreamScanAndConnect() {
+    int foundCount = WiFi.scanComplete();
+    if (foundCount == WIFI_SCAN_RUNNING) return;
+
+    UpstreamScanResult results[MAX_SCAN_RESULTS];
+    int uniqueCount = 0;
+    if (foundCount > 0) {
+        uniqueCount = fillUniqueScanResults(foundCount, results, MAX_SCAN_RESULTS);
+    } else if (foundCount != WIFI_SCAN_FAILED) {
+        uniqueCount = 0;
+    }
+
+    WiFi.scanDelete();
+    upstreamScanInProgress = false;
+
+    if (foundCount == WIFI_SCAN_FAILED) {
+        WiFi.disconnect(false, false);
+        enterUpstreamBackoff("scan-failed");
+        return;
+    }
+
+    int networkIndex = pickSavedNetworkFromScan(results, uniqueCount);
+    if (networkIndex < 0) networkIndex = pickRoundRobinUpstreamNetworkIndex();
+    if (networkIndex < 0) {
+        enterUpstreamBackoff("no-saved-hotspot");
+        return;
+    }
+
+    beginUpstreamConnect(networkIndex);
+}
+
+void tryStartUpstreamAttempt() {
+    if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
+    if (isThermalProtectionActive()) return;
+    if (WiFi.status() == WL_CONNECTED) {
+        markUpstreamConnected();
+        return;
+    }
+    if (isUpstreamRadioBusy()) return;
+
+    WiFi.scanDelete();
+    int scanRc = WiFi.scanNetworks(true, true);
+    if (scanRc == WIFI_SCAN_RUNNING || scanRc >= 0) {
+        upstreamScanInProgress = true;
+        upstreamRt.phase = UpstreamConnectPhase::Scanning;
+        uint32_t now = millis();
+        wifiCfg.lastAttemptMillis = now;
+        upstreamRt.lastAttemptMillis = now;
+        ESP_LOGI(TAG, "upstream async scan started rc=%d", scanRc);
+        if (scanRc >= 0) finishUpstreamScanAndConnect();
+        return;
+    }
+
+    ESP_LOGW(TAG, "upstream scan blocked rc=%d, disconnect and backoff", scanRc);
+    WiFi.disconnect(false, false);
+    enterUpstreamBackoff("scan-blocked");
 }
 
 void applyUpstreamWiFiConfig() {
     if (isThermalProtectionActive()) {
         WiFi.disconnect(false, true);
-        wifiCfg.activeIndex = -1;
-        wifiCfg.nextTryIndex = 0;
+        resetUpstreamRuntime(true);
         wifiCfg.lastAttemptMillis = 0;
+        upstreamRt.lastAttemptMillis = 0;
         ESP_LOGW(TAG, "upstream WiFi paused by thermal protection");
         Serial.println("Upstream WiFi paused by thermal protection");
         return;
@@ -1067,18 +1276,42 @@ void applyUpstreamWiFiConfig() {
 
     if (!wifiCfg.enabled || !hasUpstreamCredentials()) {
         WiFi.disconnect(false, true);
-        wifiCfg.activeIndex = -1;
-        wifiCfg.nextTryIndex = 0;
+        resetUpstreamRuntime(true);
         wifiCfg.lastAttemptMillis = 0;
+        upstreamRt.lastAttemptMillis = 0;
         ESP_LOGI(TAG, "upstream WiFi disabled enabled=%d saved=%u", static_cast<int>(wifiCfg.enabled), static_cast<unsigned>(wifiCfg.networkCount));
         Serial.println("Upstream WiFi disabled");
         return;
     }
 
     WiFi.disconnect(false, true);
-    wifiCfg.activeIndex = -1;
-    wifiCfg.nextTryIndex = 0;
-    startUpstreamConnect();
+    resetUpstreamRuntime(true);
+    wifiCfg.lastAttemptMillis = 0;
+    upstreamRt.lastAttemptMillis = 0;
+    tryStartUpstreamAttempt();
+}
+
+void serviceLocalAP() {
+    uint32_t now = millis();
+
+    if (apCfg.applyRequested && static_cast<int32_t>(now - apCfg.applyAtMillis) >= 0) {
+        apCfg.applyRequested = false;
+        applyLocalAPConfig();
+        return;
+    }
+
+    if (lastApHealthCheckMillis == 0 || now - lastApHealthCheckMillis >= AP_HEALTH_CHECK_MS) {
+        lastApHealthCheckMillis = now;
+        if (!apStarted || WiFi.softAPIP() != AP_IP) {
+            requestLocalAPRestart("health-check");
+        }
+    }
+
+    if (!apRestartRequested) return;
+    if (isUpstreamRadioBusy()) return;
+    if (lastApRestartMillis != 0 && now - lastApRestartMillis < AP_RESTART_MIN_INTERVAL_MS) return;
+
+    applyLocalAPConfig();
 }
 
 void serviceUpstreamWiFi() {
@@ -1088,45 +1321,57 @@ void serviceUpstreamWiFi() {
         return;
     }
 
-    if (!wifiCfg.enabled || !hasUpstreamCredentials()) return;
-    if (isThermalProtectionActive()) {
-        if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiCfg.enabled || !hasUpstreamCredentials()) {
+        if (upstreamRt.phase != UpstreamConnectPhase::Idle) {
             WiFi.disconnect(false, true);
-            wifiCfg.activeIndex = -1;
-            wifiCfg.lastAttemptMillis = 0;
+            resetUpstreamRuntime(true);
+        }
+        return;
+    }
+
+    if (isThermalProtectionActive()) {
+        if (WiFi.status() == WL_CONNECTED || isUpstreamRadioBusy()) {
+            WiFi.disconnect(false, true);
+            resetUpstreamRuntime(true);
             ESP_LOGW(TAG, "upstream WiFi disconnected due to thermal protection");
             Serial.println("Upstream WiFi disconnected due to thermal protection");
         }
         return;
     }
+
     if (WiFi.status() == WL_CONNECTED) {
-        int connectedIndex = findSavedUpstreamNetwork(WiFi.SSID());
-        if (connectedIndex >= 0) {
-            wifiCfg.activeIndex = connectedIndex;
+        if (upstreamRt.phase == UpstreamConnectPhase::Scanning) {
+            WiFi.scanDelete();
+            upstreamScanInProgress = false;
         }
+        markUpstreamConnected();
+        return;
+    }
+
+    if (upstreamRt.phase == UpstreamConnectPhase::Connected) {
+        enterUpstreamBackoff("sta-lost");
+        return;
+    }
+
+    if (upstreamRt.phase == UpstreamConnectPhase::Scanning) {
+        finishUpstreamScanAndConnect();
+        return;
+    }
+
+    if (upstreamRt.phase == UpstreamConnectPhase::Connecting) {
+        uint32_t now = millis();
+        if (now - upstreamRt.connectStartedMillis < UPSTREAM_CONNECT_TIMEOUT_MS) return;
+        ESP_LOGW(TAG, "upstream connect timeout");
+        WiFi.disconnect(false, false);
+        enterUpstreamBackoff("connect-timeout");
         return;
     }
 
     uint32_t now = millis();
-    wl_status_t status = WiFi.status();
-    bool shouldRetry = wifiCfg.lastAttemptMillis == 0;
+    uint32_t waitMs = (upstreamRt.lastAttemptMillis == 0) ? 0 : currentUpstreamBackoffMs();
+    if (waitMs > 0 && now - upstreamRt.lastAttemptMillis < waitMs) return;
 
-    if (!shouldRetry) {
-        if (status == WL_NO_SSID_AVAIL || status == WL_CONNECT_FAILED || status == WL_CONNECTION_LOST) {
-            shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_FAILURE_RETRY_MS;
-        } else {
-            shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_MS;
-        }
-        if (!shouldRetry && isThermalThrottleActive()) {
-            shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_THROTTLED_MS;
-        }
-    } else if (isThermalThrottleActive()) {
-        shouldRetry = now - wifiCfg.lastAttemptMillis >= UPSTREAM_RETRY_THROTTLED_MS;
-    }
-
-    if (shouldRetry) {
-        startUpstreamConnect();
-    }
+    tryStartUpstreamAttempt();
 }
 
 void syncNATState() {
@@ -1258,7 +1503,7 @@ String buildStatusJson() {
     size_t debugLogBytes = debugLogReady ? static_cast<size_t>(debugLogCachedBytes) : 0;
     String json;
 
-    json.reserve(7400);
+    json.reserve(7800);
     json += "{";
     json += "\"rx\":";
     json += String((unsigned)cfg.rxCount);
@@ -1316,6 +1561,20 @@ String buildStatusJson() {
     json += (debugLogReady ? "true" : "false");
     json += ",\"debugLogBytes\":";
     json += String(static_cast<unsigned>(debugLogBytes));
+    json += ",\"resetReason\":\"";
+    json += getResetReasonName(bootResetReason);
+    json += "\",\"freeHeap\":";
+    json += String(static_cast<unsigned>(ESP.getFreeHeap()));
+    json += ",\"minFreeHeap\":";
+    json += String(static_cast<unsigned>(ESP.getMinFreeHeap()));
+    json += ",\"apRunning\":";
+    json += (apStarted ? "true" : "false");
+    json += ",\"upstreamPhase\":\"";
+    json += getUpstreamPhaseName(upstreamRt.phase);
+    json += "\",\"upstreamRetryCount\":";
+    json += String(static_cast<unsigned>(upstreamRt.retryCount));
+    json += ",\"lastStaDisconnectReason\":";
+    json += String(upstreamRt.lastDisconnectReason);
     json += ",\"isaChime\":";
     json += String((int)cfg.isaChimeSuppress);
     json += ",\"emergencyDet\":";
@@ -1371,6 +1630,26 @@ String buildStatusJson() {
     json += String((unsigned)dnsBlockedRecentCount);
     json += ",\"dnsBlockedRequests\":";
     json += dnsBlockedRequests;
+    {
+        uint32_t dnsAllowIpCount = 0;
+        uint32_t dnsBlockIpCount = 0;
+        int dnsStrictAllow = 0;
+        int dnsPolicyEnabled = 0;
+        dnsIpPolicyGetStats(&dnsAllowIpCount, &dnsBlockIpCount, &dnsStrictAllow, &dnsPolicyEnabled);
+        json += ",\"dnsPolicyEnabled\":";
+        json += String(dnsPolicyEnabled);
+        json += ",\"dnsStrictAllow\":";
+        json += String(dnsStrictAllow);
+        json += ",\"dnsAllowIpCount\":";
+        json += String(static_cast<unsigned>(dnsAllowIpCount));
+        json += ",\"dnsBlockIpCount\":";
+        json += String(static_cast<unsigned>(dnsBlockIpCount));
+        json += ",\"dnsForwardPolicy\":\"";
+        if (!dnsPolicyEnabled) json += "off";
+        else if (dnsStrictAllow) json += "strict-allow";
+        else json += "blocklist-only";
+        json += "\"";
+    }
     json += ",\"natEnabled\":";
     json += String(natEnabled ? 1 : 0);
     json += ",\"natStatus\":\"";
@@ -1729,8 +2008,21 @@ void canTask(void* param) {
 }
 
 void dnsTask(void* param) {
+    uint32_t lastPolicyMillis = 0;
     for (;;) {
-        dnsServer.processNextRequest(dnsCfg, WiFi.status() == WL_CONNECTED);
+        bool upstreamReady = WiFi.status() == WL_CONNECTED;
+        dnsServer.processNextRequest(dnsCfg, upstreamReady);
+
+        uint32_t now = millis();
+        if (lastPolicyMillis == 0 || now - lastPolicyMillis >= 250) {
+            lastPolicyMillis = now;
+            dnsIpPolicyService(
+                dnsCfg.allowlist,
+                dnsCfg.blocklist,
+                dnsCfg.enabled ? 1 : 0,
+                upstreamReady ? 1 : 0
+            );
+        }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -1750,18 +2042,21 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n=== FSD Controller ===");
-    ESP_LOGI(TAG, "boot start");
+    bootResetReason = esp_reset_reason();
+    ESP_LOGI(TAG, "boot start reset=%s", getResetReasonName(bootResetReason));
 
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_LED, LOW);
 
     debugLogMutex = xSemaphoreCreateMutex();
     loadConfig();
-    debugLogReady = SPIFFS.begin(true);
+    debugLogReady = debugLogMutex != nullptr;
     if (debugLogReady) {
-        appendDebugLogRecord("BOOT", "logger ready");
-    } else {
-        ESP_LOGE(TAG, "SPIFFS mount failed, debug log disabled");
+        String bootLine;
+        bootLine.reserve(48);
+        bootLine += "logger ready reset=";
+        bootLine += getResetReasonName(bootResetReason);
+        appendDebugLogRecord("BOOT", bootLine);
     }
     ESP_LOGI(
         TAG,
@@ -1804,7 +2099,7 @@ void setup() {
 
     WiFi.onEvent(logWiFiEvent);
     WiFi.persistent(false);
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(false);
     WiFi.setSleep(false);
     WiFi.mode(WIFI_AP_STA);
     ESP_LOGI(TAG, "wifi mode set to AP+STA");
@@ -1814,7 +2109,7 @@ void setup() {
     ESP_LOGI(TAG, "dns server started port=53");
 
     setupWebServer();
-    xTaskCreatePinnedToCore(dnsTask, "DNS", 4096, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(dnsTask, "DNS", 8192, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(diagnosticTask, "DIAG", 6144, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(canTask, "CAN", 8192, NULL, 2, NULL, 1);
 }
@@ -1825,19 +2120,9 @@ void loop() {
         ESP.restart();
     }
 
-    if (apCfg.applyRequested && static_cast<int32_t>(millis() - apCfg.applyAtMillis) >= 0) {
-        apCfg.applyRequested = false;
-        applyLocalAPConfig();
-    }
-
+    serviceLocalAP();
     serviceThermalStatus();
     serviceUpstreamWiFi();
-    dnsIpPolicyService(
-        dnsCfg.allowlist,
-        dnsCfg.blocklist,
-        dnsCfg.enabled ? 1 : 0,
-        WiFi.status() == WL_CONNECTED ? 1 : 0
-    );
     syncNATState();
-    vTaskDelay(1000);
+    vTaskDelay(pdMS_TO_TICKS(200));
 }

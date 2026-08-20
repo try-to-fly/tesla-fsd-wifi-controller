@@ -7,8 +7,8 @@
 
 struct DNSFilterConfig {
     bool enabled = false;
-    char allowlist[385] = {};
-    char blocklist[385] = {};
+    char allowlist[1024] = {};
+    char blocklist[1024] = {};
 };
 
 static constexpr size_t kDnsBlockedDomainCapacity = 20;
