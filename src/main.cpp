@@ -16,6 +16,7 @@
 #include <Preferences.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
 #include <freertos/semphr.h>
 
 #include "lwip/lwip_napt.h"
@@ -27,6 +28,7 @@
 #include "drivers/twai_driver.h"
 #include "handlers.h"
 #include "web_ui.h"
+#include "wifi_state_policy.h"
 
 // ── WiFi AP config ──
 static const char* DEFAULT_AP_SSID = "FSD-Controller";
@@ -37,7 +39,9 @@ static const IPAddress AP_SUBNET(255, 255, 255, 0);
 static constexpr uint32_t AP_CONFIG_APPLY_DELAY_MS = 800;
 static constexpr uint32_t AP_RESTART_MIN_INTERVAL_MS = 8000;
 static constexpr uint32_t AP_HEALTH_CHECK_MS = 10000;
+static constexpr uint32_t AP_EVENT_SETTLE_MS = 1500;
 static constexpr uint32_t UPSTREAM_CONNECT_TIMEOUT_MS = 15000;
+static constexpr uint32_t UPSTREAM_SCAN_TIMEOUT_MS = 15000;
 static constexpr uint32_t UPSTREAM_RETRY_THROTTLED_MS = 60000;
 static constexpr uint8_t UPSTREAM_BACKOFF_STEPS = 4;
 static constexpr uint32_t UPSTREAM_BACKOFF_MS[UPSTREAM_BACKOFF_STEPS] = {3000, 5000, 15000, 60000};
@@ -118,11 +122,16 @@ struct UpstreamRuntime {
 static UpstreamWiFiConfig wifiCfg;
 static UpstreamRuntime upstreamRt;
 static volatile bool upstreamScanInProgress = false;
+static volatile bool upstreamAutomaticScanInProgress = false;
+static volatile bool upstreamScanCompletionPending = false;
+static volatile bool upstreamScanCompletionSucceeded = false;
+static uint32_t upstreamScanStartedMillis = 0;
 static volatile bool apStarted = false;
 static volatile bool apRestartRequested = false;
-static bool apApplyInProgress = false;
+static volatile bool apApplyInProgress = false;
+static volatile uint32_t apEventSettleUntilMillis = 0;
 static uint32_t lastApRestartMillis = 0;
-static uint32_t lastApHealthCheckMillis = 0;
+static volatile uint32_t lastApHealthCheckMillis = 0;
 static esp_reset_reason_t bootResetReason = ESP_RST_UNKNOWN;
 static LocalAPConfig apCfg;
 static SemaphoreHandle_t debugLogMutex = nullptr;
@@ -723,16 +732,26 @@ String buildBlockedDnsRequestsJson(uint32_t& totalBlockedCount, size_t& recentBl
     return json;
 }
 
-void requestLocalAPRestart(const char* reason) {
-    if (apApplyInProgress) return;
+bool requestLocalAPRestart(const char* reason, bool force = false) {
+    APStopAction action = decideAPStopAction(
+        apApplyInProgress,
+        millis(),
+        apEventSettleUntilMillis
+    );
+    if (!force && action == APStopAction::IgnoreExpectedStop) {
+        ESP_LOGI(TAG, "AP restart ignored during settle (%s)", reason ? reason : "unknown");
+        return false;
+    }
     apRestartRequested = true;
     ESP_LOGI(TAG, "AP restart requested (%s)", reason ? reason : "unknown");
+    return true;
 }
 
 void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_AP_START:
             apStarted = true;
+            apRestartRequested = false;
             ESP_LOGI(
                 TAG,
                 "wifi AP started ssid=%s ip=%s channel=%d",
@@ -742,9 +761,10 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
             );
             break;
         case ARDUINO_EVENT_WIFI_AP_STOP:
-            apStarted = false;
             ESP_LOGW(TAG, "wifi AP stopped");
-            if (!apApplyInProgress) requestLocalAPRestart("ap-stop");
+            if (requestLocalAPRestart("ap-stop")) {
+                apStarted = false;
+            }
             break;
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
         case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
@@ -769,7 +789,8 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
                 "wifi STA got ip=%s",
                 IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str()
             );
-            requestLocalAPRestart("sta-got-ip");
+            lastApHealthCheckMillis = millis();
+            ESP_LOGI(TAG, "AP health check deferred after STA got IP");
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             upstreamRt.lastDisconnectReason = static_cast<int>(info.wifi_sta_disconnected.reason);
@@ -778,6 +799,20 @@ void logWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
                 "wifi STA disconnected reason=%d",
                 upstreamRt.lastDisconnectReason
             );
+            break;
+        case ARDUINO_EVENT_WIFI_SCAN_DONE:
+            if (upstreamAutomaticScanInProgress) {
+                upstreamScanCompletionSucceeded = info.wifi_scan_done.status == 0;
+                upstreamScanCompletionPending = true;
+                ESP_LOGI(
+                    TAG,
+                    "upstream scan event status=%lu results=%u",
+                    static_cast<unsigned long>(info.wifi_scan_done.status),
+                    static_cast<unsigned>(info.wifi_scan_done.number)
+                );
+            } else {
+                ESP_LOGI(TAG, "wifi event=SCAN_DONE");
+            }
             break;
         default:
             ESP_LOGI(TAG, "wifi event=%s", WiFi.eventName(event));
@@ -1083,9 +1118,27 @@ void requestLocalAPApply() {
     apCfg.applyAtMillis = millis() + AP_CONFIG_APPLY_DELAY_MS;
 }
 
-void resetUpstreamRuntime(bool clearBackoff) {
+void clearAutomaticUpstreamScanState(bool stopActiveScan) {
+    bool wasScanning = upstreamAutomaticScanInProgress;
+    upstreamAutomaticScanInProgress = false;
+    upstreamRt.phase = UpstreamConnectPhase::Idle;
+
+    if (stopActiveScan && wasScanning) {
+        esp_err_t stopErr = esp_wifi_scan_stop();
+        if (stopErr != ESP_OK && stopErr != ESP_ERR_WIFI_NOT_STARTED) {
+            ESP_LOGW(TAG, "upstream scan stop err=%s", esp_err_to_name(stopErr));
+        }
+    }
+
     WiFi.scanDelete();
     upstreamScanInProgress = false;
+    upstreamScanCompletionPending = false;
+    upstreamScanCompletionSucceeded = false;
+    upstreamScanStartedMillis = 0;
+}
+
+void resetUpstreamRuntime(bool clearBackoff) {
+    clearAutomaticUpstreamScanState(true);
     upstreamRt.phase = UpstreamConnectPhase::Idle;
     wifiCfg.activeIndex = -1;
     if (clearBackoff) {
@@ -1116,8 +1169,7 @@ uint32_t currentUpstreamBackoffMs() {
 }
 
 void enterUpstreamBackoff(const char* reason) {
-    WiFi.scanDelete();
-    upstreamScanInProgress = false;
+    clearAutomaticUpstreamScanState(true);
     uint32_t delayMs = currentUpstreamBackoffMs();
     if (upstreamRt.backoffIndex + 1 < UPSTREAM_BACKOFF_STEPS) {
         ++upstreamRt.backoffIndex;
@@ -1148,12 +1200,22 @@ void enterUpstreamBackoff(const char* reason) {
     }
 }
 
-bool applyLocalAPConfig() {
+bool localAPIsHealthy() {
+    return apStarted
+        && WiFi.softAPIP() == AP_IP
+        && WiFi.softAPSSID().equals(apCfg.ssid);
+}
+
+bool applyLocalAPConfig(bool forceConfigApply) {
+    if (!forceConfigApply && localAPIsHealthy()) {
+        apRestartRequested = false;
+        return true;
+    }
+
     apApplyInProgress = true;
-    WiFi.softAPdisconnect(false);
-    delay(100);
-    WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
-    bool ok = WiFi.softAP(apCfg.ssid, apCfg.pass);
+    apEventSettleUntilMillis = millis() + AP_EVENT_SETTLE_MS;
+    bool ipConfigOk = WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
+    bool ok = ipConfigOk && WiFi.softAP(apCfg.ssid, apCfg.pass);
     apApplyInProgress = false;
     lastApRestartMillis = millis();
     apRestartRequested = false;
@@ -1168,7 +1230,7 @@ bool applyLocalAPConfig() {
     } else {
         ESP_LOGE(TAG, "local AP start failed ssid=%s", apCfg.ssid);
         Serial.printf("WiFi AP restart failed for SSID: %s\n", apCfg.ssid);
-        requestLocalAPRestart("ap-start-failed");
+        requestLocalAPRestart("ap-start-failed", true);
     }
     return ok;
 }
@@ -1205,29 +1267,41 @@ void beginUpstreamConnect(int networkIndex) {
     upstreamRt.phase = UpstreamConnectPhase::Connecting;
 }
 
-void finishUpstreamScanAndConnect() {
-    int foundCount = WiFi.scanComplete();
-    if (foundCount == WIFI_SCAN_RUNNING) return;
-
+void finishUpstreamScanAndConnect(
+    UpstreamScanAction action,
+    bool stopActiveScan,
+    const char* fallbackReason
+) {
     UpstreamScanResult results[MAX_SCAN_RESULTS];
     int uniqueCount = 0;
-    if (foundCount > 0) {
-        uniqueCount = fillUniqueScanResults(foundCount, results, MAX_SCAN_RESULTS);
-    } else if (foundCount != WIFI_SCAN_FAILED) {
-        uniqueCount = 0;
+    int visibleSavedIndex = -1;
+
+    if (action == UpstreamScanAction::ConsumeResults) {
+        int foundCount = WiFi.scanComplete();
+        if (foundCount > 0) {
+            uniqueCount = fillUniqueScanResults(foundCount, results, MAX_SCAN_RESULTS);
+            visibleSavedIndex = pickSavedNetworkFromScan(results, uniqueCount);
+        } else if (foundCount == WIFI_SCAN_FAILED) {
+            fallbackReason = "scan-results-unavailable";
+        }
     }
 
-    WiFi.scanDelete();
-    upstreamScanInProgress = false;
+    clearAutomaticUpstreamScanState(stopActiveScan);
 
-    if (foundCount == WIFI_SCAN_FAILED) {
-        WiFi.disconnect(false, false);
-        enterUpstreamBackoff("scan-failed");
-        return;
+    int fallbackIndex = visibleSavedIndex >= 0
+        ? -1
+        : pickRoundRobinUpstreamNetworkIndex();
+    int networkIndex = chooseUpstreamNetworkIndex(visibleSavedIndex, fallbackIndex);
+
+    if (visibleSavedIndex < 0 && networkIndex >= 0) {
+        ESP_LOGW(
+            TAG,
+            "upstream scan fallback reason=%s savedIndex=%d",
+            fallbackReason ? fallbackReason : "no-visible-saved-hotspot",
+            networkIndex
+        );
     }
 
-    int networkIndex = pickSavedNetworkFromScan(results, uniqueCount);
-    if (networkIndex < 0) networkIndex = pickRoundRobinUpstreamNetworkIndex();
     if (networkIndex < 0) {
         enterUpstreamBackoff("no-saved-hotspot");
         return;
@@ -1245,22 +1319,30 @@ void tryStartUpstreamAttempt() {
     }
     if (isUpstreamRadioBusy()) return;
 
-    WiFi.scanDelete();
+    clearAutomaticUpstreamScanState(false);
+    upstreamRt.phase = UpstreamConnectPhase::Scanning;
+    upstreamScanInProgress = true;
+    upstreamAutomaticScanInProgress = true;
+    upstreamScanStartedMillis = millis();
+    wifiCfg.lastAttemptMillis = upstreamScanStartedMillis;
+    upstreamRt.lastAttemptMillis = upstreamScanStartedMillis;
+
     int scanRc = WiFi.scanNetworks(true, true);
     if (scanRc == WIFI_SCAN_RUNNING || scanRc >= 0) {
-        upstreamScanInProgress = true;
-        upstreamRt.phase = UpstreamConnectPhase::Scanning;
-        uint32_t now = millis();
-        wifiCfg.lastAttemptMillis = now;
-        upstreamRt.lastAttemptMillis = now;
         ESP_LOGI(TAG, "upstream async scan started rc=%d", scanRc);
-        if (scanRc >= 0) finishUpstreamScanAndConnect();
+        if (scanRc >= 0) {
+            upstreamScanCompletionSucceeded = true;
+            upstreamScanCompletionPending = true;
+        }
         return;
     }
 
-    ESP_LOGW(TAG, "upstream scan blocked rc=%d, disconnect and backoff", scanRc);
-    WiFi.disconnect(false, false);
-    enterUpstreamBackoff("scan-blocked");
+    ESP_LOGW(TAG, "upstream scan start failed rc=%d, using saved hotspot", scanRc);
+    finishUpstreamScanAndConnect(
+        UpstreamScanAction::UseSavedFallback,
+        false,
+        "scan-start-failed"
+    );
 }
 
 void applyUpstreamWiFiConfig() {
@@ -1296,13 +1378,13 @@ void serviceLocalAP() {
 
     if (apCfg.applyRequested && static_cast<int32_t>(now - apCfg.applyAtMillis) >= 0) {
         apCfg.applyRequested = false;
-        applyLocalAPConfig();
+        applyLocalAPConfig(true);
         return;
     }
 
     if (lastApHealthCheckMillis == 0 || now - lastApHealthCheckMillis >= AP_HEALTH_CHECK_MS) {
         lastApHealthCheckMillis = now;
-        if (!apStarted || WiFi.softAPIP() != AP_IP) {
+        if (!localAPIsHealthy()) {
             requestLocalAPRestart("health-check");
         }
     }
@@ -1311,7 +1393,7 @@ void serviceLocalAP() {
     if (isUpstreamRadioBusy()) return;
     if (lastApRestartMillis != 0 && now - lastApRestartMillis < AP_RESTART_MIN_INTERVAL_MS) return;
 
-    applyLocalAPConfig();
+    applyLocalAPConfig(false);
 }
 
 void serviceUpstreamWiFi() {
@@ -1341,8 +1423,7 @@ void serviceUpstreamWiFi() {
 
     if (WiFi.status() == WL_CONNECTED) {
         if (upstreamRt.phase == UpstreamConnectPhase::Scanning) {
-            WiFi.scanDelete();
-            upstreamScanInProgress = false;
+            clearAutomaticUpstreamScanState(true);
         }
         markUpstreamConnected();
         return;
@@ -1354,7 +1435,25 @@ void serviceUpstreamWiFi() {
     }
 
     if (upstreamRt.phase == UpstreamConnectPhase::Scanning) {
-        finishUpstreamScanAndConnect();
+        bool completionPending = upstreamScanCompletionPending;
+        bool completionSucceeded = upstreamScanCompletionSucceeded;
+        uint32_t now = millis();
+        UpstreamScanAction action = decideUpstreamScanAction(
+            completionPending,
+            completionSucceeded,
+            now,
+            upstreamScanStartedMillis,
+            UPSTREAM_SCAN_TIMEOUT_MS
+        );
+
+        if (action == UpstreamScanAction::Wait) return;
+
+        bool timedOut = !completionPending;
+        finishUpstreamScanAndConnect(
+            action,
+            timedOut,
+            timedOut ? "scan-timeout" : (completionSucceeded ? nullptr : "scan-failed")
+        );
         return;
     }
 
@@ -2103,7 +2202,7 @@ void setup() {
     WiFi.setSleep(false);
     WiFi.mode(WIFI_AP_STA);
     ESP_LOGI(TAG, "wifi mode set to AP+STA");
-    applyLocalAPConfig();
+    applyLocalAPConfig(true);
     requestUpstreamApply();
     dnsServer.begin();
     ESP_LOGI(TAG, "dns server started port=53");
