@@ -97,6 +97,7 @@ static SemaphoreHandle_t configMutex = nullptr;
 static volatile bool  bleClientConnected = false;
 static volatile bool  bleRequestBusy = false;
 static volatile uint32_t bleConnectionGeneration = 0;
+static bool           bleControlStarted = false;
 static ble_protocol::Assembler bleRequestAssembler;
 
 void updateBLEPasskey();
@@ -2498,8 +2499,10 @@ void setupBLEControl() {
     BLEAdvertising* advertising = BLEDevice::getAdvertising();
     advertising->addServiceUUID(BLE_SERVICE_UUID);
     advertising->setScanResponse(true);
-    advertising->setMinPreferred(0x06);
-    advertising->setMaxPreferred(0x12);
+    advertising->setMinInterval(0xA0);
+    advertising->setMaxInterval(0xF0);
+    advertising->setMinPreferred(0x18);
+    advertising->setMaxPreferred(0x30);
     BLEDevice::startAdvertising();
     ESP_LOGI(TAG, "ble control ready name=%s", deviceName);
 }
@@ -2879,10 +2882,7 @@ void setup() {
     ESP_LOGI(TAG, "dns server started port=53");
 
     setupWebServer();
-    if (bleCommandQueue != nullptr) {
-        setupBLEControl();
-        xTaskCreatePinnedToCore(bleControlTask, "BLE", 12288, NULL, 1, NULL, 0);
-    } else {
+    if (bleCommandQueue == nullptr) {
         ESP_LOGE(TAG, "ble command queue unavailable");
     }
     xTaskCreatePinnedToCore(dnsTask, "DNS", 8192, NULL, 1, NULL, 0);
@@ -2900,5 +2900,16 @@ void loop() {
     serviceThermalStatus();
     serviceUpstreamWiFi();
     syncNATState();
+    if (!bleControlStarted
+        && bleCommandQueue != nullptr
+        && (!wifiCfg.enabled
+            || !hasUpstreamCredentials()
+            || WiFi.status() == WL_CONNECTED
+            || millis() >= UPSTREAM_CONNECT_TIMEOUT_MS)) {
+        WiFi.setSleep(true);
+        setupBLEControl();
+        xTaskCreatePinnedToCore(bleControlTask, "BLE", 12288, NULL, 1, NULL, 0);
+        bleControlStarted = true;
+    }
     vTaskDelay(pdMS_TO_TICKS(200));
 }
