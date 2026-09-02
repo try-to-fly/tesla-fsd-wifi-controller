@@ -8,20 +8,31 @@
 
 #include <Arduino.h>
 #include <cctype>
+#include <climits>
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <new>
+#include <string>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <BLE2902.h>
+#include <BLEDevice.h>
+#include <BLESecurity.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <cJSON.h>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <freertos/semphr.h>
+#include <mbedtls/sha256.h>
 
 #include "lwip/lwip_napt.h"
 
 #include "can_frame_types.h"
+#include "ble_protocol.h"
+#include "controller_contract.h"
 #include "debug_log.h"
 #include "dns_whitelist.h"
 #include "dns_ip_blocker.h"
@@ -60,6 +71,11 @@ static constexpr uint32_t DEBUG_HEARTBEAT_MS = 3000;
 static constexpr size_t DEBUG_LOG_CAPACITY = 16 * 1024;
 static constexpr uint32_t OTA_STATUS_STALE_MS = 8000;
 static constexpr uint32_t OTA_RESTART_DELAY_MS = 1500;
+static constexpr const char* BLE_SERVICE_UUID = "F5D00001-8B1A-4E7A-9C2D-7A0D5E1C0001";
+static constexpr const char* BLE_COMMAND_UUID = "F5D00002-8B1A-4E7A-9C2D-7A0D5E1C0001";
+static constexpr const char* BLE_RESPONSE_UUID = "F5D00003-8B1A-4E7A-9C2D-7A0D5E1C0001";
+static constexpr const char* BLE_TELEMETRY_UUID = "F5D00004-8B1A-4E7A-9C2D-7A0D5E1C0001";
+static constexpr uint32_t BLE_TELEMETRY_INTERVAL_MS = 1000;
 
 // ── Globals ──
 static TWAIDriver     canDriver;
@@ -72,6 +88,18 @@ static volatile size_t debugLogCachedBytes = 0;
 static char           debugLogBuf[DEBUG_LOG_CAPACITY];
 static size_t         debugLogHead = 0;
 static size_t         debugLogUsed = 0;
+static BLEServer*     bleServer = nullptr;
+static BLECharacteristic* bleResponseCharacteristic = nullptr;
+static BLECharacteristic* bleTelemetryCharacteristic = nullptr;
+static BLESecurity*   bleSecurity = nullptr;
+static QueueHandle_t  bleCommandQueue = nullptr;
+static SemaphoreHandle_t configMutex = nullptr;
+static volatile bool  bleClientConnected = false;
+static volatile bool  bleRequestBusy = false;
+static volatile uint32_t bleConnectionGeneration = 0;
+static ble_protocol::Assembler bleRequestAssembler;
+
+void updateBLEPasskey();
 
 struct LocalAPConfig {
     char ssid[33] = "FSD-Controller";
@@ -100,6 +128,43 @@ struct UpstreamWiFiConfig {
     uint8_t              nextTryIndex        = 0;
     volatile bool        applyRequested      = false;
     uint32_t             lastAttemptMillis   = 0;
+};
+
+struct ConfigPatch {
+    bool hasFsdEnable = false;
+    bool fsdEnable = false;
+    bool hasHwMode = false;
+    uint8_t hwMode = 0;
+    bool hasSpeedProfile = false;
+    uint8_t speedProfile = 0;
+    bool hasProfileMode = false;
+    bool profileModeAuto = false;
+    bool hasIsaChime = false;
+    bool isaChime = false;
+    bool hasEmergencyDetection = false;
+    bool emergencyDetection = false;
+    bool hasChinaMode = false;
+    bool chinaMode = false;
+    bool hasAPSSID = false;
+    String apSSID;
+    bool hasAPPass = false;
+    String apPass;
+    bool hasUpstreamEnable = false;
+    bool upstreamEnable = false;
+    bool hasDNSWhitelistEnable = false;
+    bool dnsWhitelistEnable = false;
+    bool hasDNSAllowlist = false;
+    String dnsAllowlist;
+    bool hasDNSBlocklist = false;
+    String dnsBlocklist;
+};
+
+struct BLECommand {
+    uint16_t messageId = 0;
+    uint32_t connectionGeneration = 0;
+    std::string payload;
+    std::string errorCode;
+    std::string framingError;
 };
 
 enum class UpstreamConnectPhase : uint8_t {
@@ -1565,7 +1630,207 @@ void saveConfig() {
     prefs.end();
 }
 
-String buildStatusJson() {
+bool applyConfigPatch(const ConfigPatch& patch, String& error) {
+    if (configMutex == nullptr || xSemaphoreTake(configMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        error = "配置正忙，请稍后重试";
+        return false;
+    }
+
+    String nextAPSSID = patch.hasAPSSID ? patch.apSSID : String(apCfg.ssid);
+    String nextAPPass = patch.hasAPPass ? patch.apPass : String(apCfg.pass);
+    String nextAllowlist = patch.dnsAllowlist;
+    String nextBlocklist = patch.dnsBlocklist;
+    nextAPSSID.trim();
+    nextAllowlist.trim();
+    nextBlocklist.trim();
+
+    controller_contract::ConfigValidationInput validation;
+    validation.hasHardwareMode = patch.hasHwMode;
+    validation.hardwareMode = patch.hwMode;
+    validation.hasSpeedProfile = patch.hasSpeedProfile;
+    validation.speedProfile = patch.speedProfile;
+    validation.touchesAP = patch.hasAPSSID || patch.hasAPPass;
+    validation.apSSIDLength = nextAPSSID.length();
+    validation.apPasswordLength = nextAPPass.length();
+    validation.hasDNSAllowlist = patch.hasDNSAllowlist;
+    validation.dnsAllowlistLength = nextAllowlist.length();
+    validation.dnsAllowlistCapacity = sizeof(dnsCfg.allowlist);
+    validation.hasDNSBlocklist = patch.hasDNSBlocklist;
+    validation.dnsBlocklistLength = nextBlocklist.length();
+    validation.dnsBlocklistCapacity = sizeof(dnsCfg.blocklist);
+    switch (controller_contract::validateConfig(validation)) {
+        case controller_contract::ConfigValidationError::InvalidHardwareMode:
+            error = "硬件版本无效";
+            break;
+        case controller_contract::ConfigValidationError::InvalidSpeedProfile:
+            error = "速度模式无效";
+            break;
+        case controller_contract::ConfigValidationError::InvalidAPSSID:
+            error = "热点名称长度必须为 1-32 个字符";
+            break;
+        case controller_contract::ConfigValidationError::InvalidAPPassword:
+            error = "热点密码长度必须为 8-63 个字符";
+            break;
+        case controller_contract::ConfigValidationError::DNSAllowlistTooLong:
+            error = "DNS 白名单内容过长";
+            break;
+        case controller_contract::ConfigValidationError::DNSBlocklistTooLong:
+            error = "DNS 黑名单内容过长";
+            break;
+        case controller_contract::ConfigValidationError::None:
+            break;
+    }
+
+    if (!error.isEmpty()) {
+        xSemaphoreGive(configMutex);
+        return false;
+    }
+
+    bool changed = false;
+    bool wifiChanged = false;
+    bool apChanged = false;
+    bool apPasswordChanged = false;
+
+    if (patch.hasFsdEnable && cfg.fsdEnable != patch.fsdEnable) {
+        cfg.fsdEnable = patch.fsdEnable;
+        if (!cfg.fsdEnable) cfg.appliedSpeedOffsetKph = 0;
+        changed = true;
+    }
+    if (patch.hasHwMode && cfg.hwMode != patch.hwMode) {
+        if (patch.hwMode == 1 || cfg.hwMode == 1) resetHW3SpeedLimitState();
+        cfg.hwMode = patch.hwMode;
+        changed = true;
+    }
+    if (patch.hasSpeedProfile && cfg.speedProfile != patch.speedProfile) {
+        cfg.speedProfile = patch.speedProfile;
+        changed = true;
+    }
+    if (patch.hasProfileMode && cfg.profileModeAuto != patch.profileModeAuto) {
+        cfg.profileModeAuto = patch.profileModeAuto;
+        changed = true;
+    }
+    if (patch.hasIsaChime && cfg.isaChimeSuppress != patch.isaChime) {
+        cfg.isaChimeSuppress = patch.isaChime;
+        changed = true;
+    }
+    if (patch.hasEmergencyDetection && cfg.emergencyDetection != patch.emergencyDetection) {
+        cfg.emergencyDetection = patch.emergencyDetection;
+        changed = true;
+    }
+    if (patch.hasChinaMode && cfg.chinaMode != patch.chinaMode) {
+        cfg.chinaMode = patch.chinaMode;
+        changed = true;
+    }
+    if ((patch.hasAPSSID || patch.hasAPPass)
+        && (nextAPSSID != String(apCfg.ssid) || nextAPPass != String(apCfg.pass))) {
+        apPasswordChanged = nextAPPass != String(apCfg.pass);
+        copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), nextAPSSID);
+        copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), nextAPPass);
+        changed = true;
+        apChanged = true;
+    }
+    if (patch.hasUpstreamEnable && wifiCfg.enabled != patch.upstreamEnable) {
+        wifiCfg.enabled = patch.upstreamEnable;
+        changed = true;
+        wifiChanged = true;
+    }
+    if (patch.hasDNSWhitelistEnable && dnsCfg.enabled != patch.dnsWhitelistEnable) {
+        dnsCfg.enabled = patch.dnsWhitelistEnable;
+        changed = true;
+    }
+    if (patch.hasDNSAllowlist && nextAllowlist != String(dnsCfg.allowlist)) {
+        copyStringToBuffer(dnsCfg.allowlist, sizeof(dnsCfg.allowlist), nextAllowlist);
+        changed = true;
+    }
+    if (patch.hasDNSBlocklist && nextBlocklist != String(dnsCfg.blocklist)) {
+        copyStringToBuffer(dnsCfg.blocklist, sizeof(dnsCfg.blocklist), nextBlocklist);
+        changed = true;
+    }
+
+    if (changed) saveConfig();
+    if (apChanged) requestLocalAPApply();
+    if (wifiChanged) requestUpstreamApply();
+    if (apPasswordChanged) updateBLEPasskey();
+    xSemaphoreGive(configMutex);
+    return true;
+}
+
+bool saveUpstreamNetwork(const String& ssidInput, const String& pass, bool overwritePass, String& error) {
+    String ssid = ssidInput;
+    ssid.trim();
+    if (ssid.isEmpty()) error = "热点名称不能为空";
+    else if (ssid.length() > 32 || pass.length() > 63) error = "热点名称或密码长度不合法";
+    else if (isReservedUpstreamSSID(ssid)) error = "不能保存本机发射的热点";
+    if (!error.isEmpty()) return false;
+
+    if (configMutex == nullptr || xSemaphoreTake(configMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        error = "配置正忙，请稍后重试";
+        return false;
+    }
+    if (findSavedUpstreamNetwork(ssid) < 0 && wifiCfg.networkCount >= MAX_UPSTREAM_NETWORKS) {
+        error = "已达到可保存热点上限";
+    } else if (!addOrUpdateSavedUpstreamNetwork(ssid, pass, overwritePass)) {
+        error = "保存热点失败";
+    } else {
+        saveConfig();
+        requestUpstreamApply();
+    }
+    xSemaphoreGive(configMutex);
+    return error.isEmpty();
+}
+
+bool deleteUpstreamNetwork(const String& ssidInput, String& error) {
+    String ssid = ssidInput;
+    ssid.trim();
+    if (ssid.isEmpty()) {
+        error = "热点名称不能为空";
+        return false;
+    }
+    if (configMutex == nullptr || xSemaphoreTake(configMutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        error = "配置正忙，请稍后重试";
+        return false;
+    }
+    if (!removeSavedUpstreamNetwork(ssid)) {
+        error = "热点不存在";
+    } else {
+        saveConfig();
+        requestUpstreamApply();
+    }
+    xSemaphoreGive(configMutex);
+    return error.isEmpty();
+}
+
+String buildUpstreamScanJson(int& statusCode, String& error) {
+    UpstreamScanResult results[MAX_SCAN_RESULTS];
+    int resultCount = performUpstreamScan(results, MAX_SCAN_RESULTS);
+    if (resultCount < 0) {
+        statusCode = 409;
+        error = "热点搜索忙，请稍后再试";
+        return String();
+    }
+
+    String json = "{\"results\":[";
+    json.reserve(1200);
+    for (int i = 0; i < resultCount; ++i) {
+        if (i > 0) json += ",";
+        json += "{\"ssid\":\"";
+        json += jsonEscape(String(results[i].ssid));
+        json += "\",\"rssi\":";
+        json += String(results[i].rssi);
+        json += ",\"secure\":";
+        json += (results[i].secure ? "true" : "false");
+        json += ",\"saved\":";
+        json += (results[i].saved ? "true" : "false");
+        json += "}";
+    }
+    json += "]}";
+    statusCode = 200;
+    return json;
+}
+
+String buildStatusJson(
+    controller_contract::StatusAudience audience = controller_contract::StatusAudience::Web
+) {
     uint32_t now = millis();
     uint32_t uptime = (now - cfg.uptimeStart) / 1000;
     bool upstreamConnected = WiFi.status() == WL_CONNECTED;
@@ -1692,9 +1957,15 @@ String buildStatusJson() {
     json += String(wifiChannel);
     json += ",\"apClients\":";
     json += String(apClientCount);
-    json += ",\"apPassword\":\"";
-    json += apPass;
-    json += "\"";
+    json += ",\"apPasswordConfigured\":";
+    json += (strlen(apCfg.pass) >= 8 ? "true" : "false");
+    json += ",\"apPasswordIsDefault\":";
+    json += (String(apCfg.pass) == String(DEFAULT_AP_PASS) ? "true" : "false");
+    if (controller_contract::includesAPPassword(audience)) {
+        json += ",\"apPassword\":\"";
+        json += apPass;
+        json += "\"";
+    }
     json += ",\"upstreamSSID\":\"";
     json += activeSSID;
     json += "\",\"connectedUpstreamSSID\":\"";
@@ -1758,6 +2029,481 @@ String buildStatusJson() {
     return json;
 }
 
+uint32_t deriveBLEPasskey() {
+    uint8_t digest[32] = {};
+    const auto* password = reinterpret_cast<const uint8_t*>(apCfg.pass);
+    mbedtls_sha256_ret(password, strlen(apCfg.pass), digest, 0);
+    uint32_t value = (static_cast<uint32_t>(digest[0]) << 24)
+        | (static_cast<uint32_t>(digest[1]) << 16)
+        | (static_cast<uint32_t>(digest[2]) << 8)
+        | static_cast<uint32_t>(digest[3]);
+    return value % 1000000U;
+}
+
+void updateBLEPasskey() {
+    if (bleSecurity == nullptr) return;
+    bleSecurity->setStaticPIN(deriveBLEPasskey());
+    bleSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+}
+
+String buildBLESuccess(uint16_t messageId, const String& data = "null") {
+    String json;
+    json.reserve(data.length() + 48);
+    json += "{\"id\":";
+    json += String(messageId);
+    json += ",\"ok\":true,\"data\":";
+    json += data;
+    json += "}";
+    return json;
+}
+
+String buildBLEError(uint16_t messageId, const String& code, const String& message) {
+    String json;
+    json.reserve(code.length() + message.length() + 80);
+    json += "{\"id\":";
+    json += String(messageId);
+    json += ",\"ok\":false,\"error\":{\"code\":\"";
+    json += jsonEscape(code);
+    json += "\",\"message\":\"";
+    json += jsonEscape(message);
+    json += "\"}}";
+    return json;
+}
+
+bool parseJSONBool(cJSON* object, const char* key, bool& present, bool& value, String& error) {
+    cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (item == nullptr) return true;
+    present = true;
+    if (cJSON_IsBool(item)) value = cJSON_IsTrue(item);
+    else if (cJSON_IsNumber(item)) value = item->valueint != 0;
+    else {
+        error = String(key) + " 必须是布尔值";
+        return false;
+    }
+    return true;
+}
+
+bool parseJSONUInt8(cJSON* object, const char* key, bool& present, uint8_t& value, String& error) {
+    cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (item == nullptr) return true;
+    present = true;
+    if (!cJSON_IsNumber(item) || item->valuedouble < 0 || item->valuedouble > 255) {
+        error = String(key) + " 必须是有效整数";
+        return false;
+    }
+    value = static_cast<uint8_t>(item->valueint);
+    return true;
+}
+
+bool parseJSONString(cJSON* object, const char* key, bool& present, String& value, String& error) {
+    cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (item == nullptr) return true;
+    present = true;
+    if (!cJSON_IsString(item) || item->valuestring == nullptr) {
+        error = String(key) + " 必须是字符串";
+        return false;
+    }
+    value = item->valuestring;
+    return true;
+}
+
+bool parseBLEConfigPatch(cJSON* args, ConfigPatch& patch, String& error) {
+    if (!cJSON_IsObject(args)) {
+        error = "config.set 缺少 args 对象";
+        return false;
+    }
+    return parseJSONBool(args, "fsdEnable", patch.hasFsdEnable, patch.fsdEnable, error)
+        && parseJSONUInt8(args, "hwMode", patch.hasHwMode, patch.hwMode, error)
+        && parseJSONUInt8(args, "speedProfile", patch.hasSpeedProfile, patch.speedProfile, error)
+        && parseJSONBool(args, "profileMode", patch.hasProfileMode, patch.profileModeAuto, error)
+        && parseJSONBool(args, "isaChime", patch.hasIsaChime, patch.isaChime, error)
+        && parseJSONBool(args, "emergencyDet", patch.hasEmergencyDetection, patch.emergencyDetection, error)
+        && parseJSONBool(args, "chinaMode", patch.hasChinaMode, patch.chinaMode, error)
+        && parseJSONString(args, "apSSID", patch.hasAPSSID, patch.apSSID, error)
+        && parseJSONString(args, "apPass", patch.hasAPPass, patch.apPass, error)
+        && parseJSONBool(args, "upstreamEnable", patch.hasUpstreamEnable, patch.upstreamEnable, error)
+        && parseJSONBool(args, "dnsWhitelistEnable", patch.hasDNSWhitelistEnable, patch.dnsWhitelistEnable, error)
+        && parseJSONString(args, "dnsAllowlist", patch.hasDNSAllowlist, patch.dnsAllowlist, error)
+        && parseJSONString(args, "dnsBlocklist", patch.hasDNSBlocklist, patch.dnsBlocklist, error);
+}
+
+String dispatchBLECommand(uint16_t frameMessageId, const std::string& payload) {
+    std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(
+        cJSON_ParseWithLength(payload.c_str(), payload.size()),
+        cJSON_Delete
+    );
+    if (!root || !cJSON_IsObject(root.get())) {
+        return buildBLEError(frameMessageId, "invalid-json", "请求不是有效 JSON 对象");
+    }
+
+    cJSON* idItem = cJSON_GetObjectItemCaseSensitive(root.get(), "id");
+    cJSON* opItem = cJSON_GetObjectItemCaseSensitive(root.get(), "op");
+    cJSON* args = cJSON_GetObjectItemCaseSensitive(root.get(), "args");
+    if (!cJSON_IsNumber(idItem) || idItem->valueint < 0 || idItem->valueint > 65535) {
+        return buildBLEError(frameMessageId, "invalid-id", "请求 id 无效");
+    }
+    if (static_cast<uint16_t>(idItem->valueint) != frameMessageId) {
+        return buildBLEError(frameMessageId, "id-mismatch", "帧消息 ID 与 JSON id 不一致");
+    }
+    if (!cJSON_IsString(opItem) || opItem->valuestring == nullptr) {
+        return buildBLEError(frameMessageId, "invalid-op", "请求缺少 op");
+    }
+
+    String op = opItem->valuestring;
+    if (!controller_contract::isSupportedBLEOperation(op.c_str())) {
+        return buildBLEError(frameMessageId, "unknown-op", "不支持的操作");
+    }
+    if (op == "status.get") {
+        return buildBLESuccess(
+            frameMessageId,
+            buildStatusJson(controller_contract::StatusAudience::BLE)
+        );
+    }
+
+    if (op == "config.set") {
+        ConfigPatch patch;
+        String error;
+        if (!parseBLEConfigPatch(args, patch, error) || !applyConfigPatch(patch, error)) {
+            return buildBLEError(frameMessageId, "invalid-config", error);
+        }
+        return buildBLESuccess(
+            frameMessageId,
+            buildStatusJson(controller_contract::StatusAudience::BLE)
+        );
+    }
+
+    if (op == "upstream.scan") {
+        int statusCode = 200;
+        String error;
+        String data = buildUpstreamScanJson(statusCode, error);
+        if (statusCode != 200) return buildBLEError(frameMessageId, "scan-busy", error);
+        return buildBLESuccess(frameMessageId, data);
+    }
+
+    if (op == "upstream.save") {
+        if (!cJSON_IsObject(args)) return buildBLEError(frameMessageId, "invalid-args", "缺少热点参数");
+        cJSON* ssidItem = cJSON_GetObjectItemCaseSensitive(args, "ssid");
+        cJSON* passItem = cJSON_GetObjectItemCaseSensitive(args, "pass");
+        if (!cJSON_IsString(ssidItem) || ssidItem->valuestring == nullptr) {
+            return buildBLEError(frameMessageId, "invalid-ssid", "缺少热点名称");
+        }
+        if (passItem != nullptr && (!cJSON_IsString(passItem) || passItem->valuestring == nullptr)) {
+            return buildBLEError(frameMessageId, "invalid-pass", "热点密码必须是字符串");
+        }
+        String error;
+        String pass = passItem == nullptr ? String() : String(passItem->valuestring);
+        if (!saveUpstreamNetwork(ssidItem->valuestring, pass, passItem != nullptr, error)) {
+            return buildBLEError(frameMessageId, "save-failed", error);
+        }
+        return buildBLESuccess(
+            frameMessageId,
+            buildStatusJson(controller_contract::StatusAudience::BLE)
+        );
+    }
+
+    if (op == "upstream.delete") {
+        cJSON* ssidItem = cJSON_IsObject(args) ? cJSON_GetObjectItemCaseSensitive(args, "ssid") : nullptr;
+        if (!cJSON_IsString(ssidItem) || ssidItem->valuestring == nullptr) {
+            return buildBLEError(frameMessageId, "invalid-ssid", "缺少热点名称");
+        }
+        String error;
+        if (!deleteUpstreamNetwork(ssidItem->valuestring, error)) {
+            return buildBLEError(frameMessageId, "delete-failed", error);
+        }
+        return buildBLESuccess(
+            frameMessageId,
+            buildStatusJson(controller_contract::StatusAudience::BLE)
+        );
+    }
+
+    if (op == "dns.blocked.clear") {
+        dnsServer.clearBlockedRequests();
+        return buildBLESuccess(
+            frameMessageId,
+            buildStatusJson(controller_contract::StatusAudience::BLE)
+        );
+    }
+
+    if (op == "debug.read") {
+        if (!debugLogReady) return buildBLEError(frameMessageId, "log-unavailable", "诊断日志不可用");
+        String data = "{\"text\":\"";
+        data += jsonEscape(readDebugLogText());
+        data += "\"}";
+        return buildBLESuccess(frameMessageId, data);
+    }
+
+    if (op == "debug.clear") {
+        clearDebugLogStorage();
+        return buildBLESuccess(frameMessageId);
+    }
+
+    return buildBLEError(frameMessageId, "unknown-op", "不支持的操作");
+}
+
+void sendBLEResponse(uint16_t messageId, String response, bool errorResponse = false) {
+    if (response.length() > ble_protocol::kMaxResponseBytes) {
+        response = buildBLEError(messageId, "response-too-large", "响应超过 BLE 大小限制");
+        errorResponse = true;
+    }
+    if (!bleClientConnected || bleResponseCharacteristic == nullptr || bleServer == nullptr) return;
+
+    uint16_t mtu = bleServer->getPeerMTU(bleServer->getConnId());
+    if (mtu < 23) mtu = 23;
+    size_t payloadSize = std::min<size_t>(180, mtu - 3 - ble_protocol::kHeaderSize);
+    if (payloadSize == 0) payloadSize = 1;
+    size_t offset = 0;
+    uint16_t chunkIndex = 0;
+
+    do {
+        size_t chunkLength = std::min(payloadSize, response.length() - offset);
+        std::vector<uint8_t> frame(ble_protocol::kHeaderSize + chunkLength);
+        uint8_t flags = 0;
+        if (offset == 0) flags |= ble_protocol::kFlagStart;
+        if (offset + chunkLength >= response.length()) flags |= ble_protocol::kFlagEnd;
+        if (errorResponse) flags |= ble_protocol::kFlagError;
+        ble_protocol::writeHeader(
+            frame.data(),
+            ble_protocol::FrameHeader{ble_protocol::kVersion, flags, messageId, chunkIndex}
+        );
+        memcpy(frame.data() + ble_protocol::kHeaderSize, response.c_str() + offset, chunkLength);
+        bleResponseCharacteristic->setValue(frame.data(), frame.size());
+        bleResponseCharacteristic->indicate();
+        offset += chunkLength;
+        ++chunkIndex;
+    } while (offset < response.length() && bleClientConnected);
+}
+
+void writeUInt16LE(uint8_t* output, uint16_t value) {
+    output[0] = static_cast<uint8_t>(value & 0xFF);
+    output[1] = static_cast<uint8_t>(value >> 8);
+}
+
+void sendBLETelemetry() {
+    if (!bleClientConnected || bleTelemetryCharacteristic == nullptr) return;
+    static uint32_t lastRx = 0;
+    static uint32_t lastModified = 0;
+    static uint32_t lastErrors = 0;
+    static uint8_t sequence = 0;
+    uint32_t now = millis();
+    bool vehicleSpeedValid = cfg.lastVehicleSpeedMillis != 0
+        && now - cfg.lastVehicleSpeedMillis <= VEHICLE_SPEED_STALE_MS;
+    bool canActive = cfg.lastRxMillis != 0 && now - cfg.lastRxMillis <= CAN_ACTIVITY_WINDOW_MS;
+    uint16_t flags = 0;
+    if (cfg.canOK) flags |= 1 << 0;
+    if (canActive) flags |= 1 << 1;
+    if (cfg.fsdTriggered) flags |= 1 << 2;
+    if (cfg.fsdEnable) flags |= 1 << 3;
+    if (apStarted) flags |= 1 << 4;
+    if (WiFi.status() == WL_CONNECTED) flags |= 1 << 5;
+    if (natEnabled) flags |= 1 << 6;
+    if (isThermalProtectionActive()) flags |= 1 << 7;
+    if (vehicleSpeedValid) flags |= 1 << 8;
+    if (cfg.profileModeAuto) flags |= 1 << 9;
+    if (dnsCfg.enabled) flags |= 1 << 10;
+
+    uint8_t packet[20] = {};
+    packet[0] = ble_protocol::kVersion;
+    writeUInt16LE(packet + 1, flags);
+    packet[3] = cfg.hwMode;
+    packet[4] = cfg.speedProfile;
+    writeUInt16LE(packet + 5, cfg.vehicleSpeedCentiKph);
+    uint16_t detectedLimit = cfg.detectedSpeedLimitKph;
+    packet[7] = static_cast<uint8_t>(std::min<uint16_t>(detectedLimit, 255));
+    packet[8] = cfg.appliedSpeedOffsetKph;
+    int16_t temp = std::isfinite(thermalStatus.currentC)
+        ? static_cast<int16_t>(thermalStatus.currentC * 10.0f)
+        : INT16_MIN;
+    writeUInt16LE(packet + 9, static_cast<uint16_t>(temp));
+    packet[11] = static_cast<uint8_t>(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127);
+    packet[12] = static_cast<uint8_t>(std::min<int32_t>(WiFi.softAPgetStationNum(), 255));
+    writeUInt16LE(packet + 13, static_cast<uint16_t>(std::min<uint32_t>(cfg.rxCount - lastRx, 65535)));
+    writeUInt16LE(packet + 15, static_cast<uint16_t>(std::min<uint32_t>(cfg.modifiedCount - lastModified, 65535)));
+    packet[17] = static_cast<uint8_t>(std::min<uint32_t>(cfg.errorCount - lastErrors, 255));
+    packet[18] = sequence++;
+    lastRx = cfg.rxCount;
+    lastModified = cfg.modifiedCount;
+    lastErrors = cfg.errorCount;
+
+    bleTelemetryCharacteristic->setValue(packet, sizeof(packet));
+    bleTelemetryCharacteristic->notify();
+}
+
+class ControllerBLESecurityCallbacks : public BLESecurityCallbacks {
+public:
+    uint32_t onPassKeyRequest() override { return deriveBLEPasskey(); }
+    void onPassKeyNotify(uint32_t) override {}
+    bool onSecurityRequest() override { return true; }
+    void onAuthenticationComplete(esp_ble_auth_cmpl_t result) override {
+        ESP_LOGI(TAG, "ble auth %s reason=%u", result.success ? "ok" : "failed", result.fail_reason);
+    }
+    bool onConfirmPIN(uint32_t) override { return true; }
+};
+
+class ControllerBLEServerCallbacks : public BLEServerCallbacks {
+public:
+    void onConnect(BLEServer*) override {
+        ++bleConnectionGeneration;
+        bleClientConnected = true;
+        bleRequestAssembler.reset();
+        ESP_LOGI(TAG, "ble client connected");
+    }
+    void onDisconnect(BLEServer* server) override {
+        ++bleConnectionGeneration;
+        bleClientConnected = false;
+        bleRequestBusy = false;
+        bleRequestAssembler.reset();
+        server->startAdvertising();
+        ESP_LOGI(TAG, "ble client disconnected");
+    }
+};
+
+bool enqueueBLECommand(BLECommand* command) {
+    if (command == nullptr || bleCommandQueue == nullptr
+        || xQueueSend(bleCommandQueue, &command, 0) != pdTRUE) {
+        delete command;
+        return false;
+    }
+    return true;
+}
+
+class ControllerBLECommandCallbacks : public BLECharacteristicCallbacks {
+public:
+    void onWrite(BLECharacteristic* characteristic) override {
+        std::string value = characteristic->getValue();
+        if (value.empty()) return;
+
+        ble_protocol::FrameHeader header;
+        ble_protocol::readHeader(
+            reinterpret_cast<const uint8_t*>(value.data()),
+            value.size(),
+            header
+        );
+        std::string framingError;
+        auto result = bleRequestAssembler.push(
+            reinterpret_cast<const uint8_t*>(value.data()),
+            value.size(),
+            millis(),
+            ble_protocol::kMaxRequestBytes,
+            framingError
+        );
+        if (result == ble_protocol::AssembleResult::Partial) return;
+        if (bleRequestBusy) {
+            auto* command = new (std::nothrow) BLECommand();
+            if (command != nullptr) {
+                command->messageId = header.messageId;
+                command->connectionGeneration = bleConnectionGeneration;
+                command->errorCode = "request-busy";
+                command->framingError = "已有请求正在执行";
+                enqueueBLECommand(command);
+            }
+            bleRequestAssembler.reset();
+            return;
+        }
+
+        auto* command = new (std::nothrow) BLECommand();
+        if (command == nullptr) return;
+        command->messageId = header.messageId;
+        command->connectionGeneration = bleConnectionGeneration;
+        if (result == ble_protocol::AssembleResult::Error) {
+            command->framingError = framingError;
+        } else {
+            command->payload.assign(
+                bleRequestAssembler.payload().begin(),
+                bleRequestAssembler.payload().end()
+            );
+        }
+        bleRequestAssembler.reset();
+        bleRequestBusy = enqueueBLECommand(command);
+    }
+};
+
+void bleControlTask(void*) {
+    uint32_t lastTelemetryMillis = 0;
+    for (;;) {
+        BLECommand* command = nullptr;
+        if (xQueueReceive(bleCommandQueue, &command, pdMS_TO_TICKS(50)) == pdTRUE && command != nullptr) {
+            String response;
+            bool isError = !command->framingError.empty();
+            if (isError) {
+                response = buildBLEError(
+                    command->messageId,
+                    command->errorCode.empty() ? "invalid-frame" : command->errorCode.c_str(),
+                    command->framingError.c_str()
+                );
+            } else {
+                response = dispatchBLECommand(command->messageId, command->payload);
+                isError = response.indexOf("\"ok\":false") >= 0;
+            }
+            bool currentConnection = command->connectionGeneration == bleConnectionGeneration;
+            if (currentConnection) sendBLEResponse(command->messageId, response, isError);
+            delete command;
+            if (currentConnection) {
+                bleRequestBusy = uxQueueMessagesWaiting(bleCommandQueue) > 0;
+            }
+        }
+
+        uint32_t now = millis();
+        if (bleClientConnected && now - lastTelemetryMillis >= BLE_TELEMETRY_INTERVAL_MS) {
+            lastTelemetryMillis = now;
+            sendBLETelemetry();
+        }
+    }
+}
+
+void setupBLEControl() {
+    uint64_t chipId = ESP.getEfuseMac();
+    char deviceName[32];
+    snprintf(deviceName, sizeof(deviceName), "FSD-Controller-%04X", static_cast<unsigned>(chipId & 0xFFFF));
+
+    BLEDevice::init(deviceName);
+    BLEDevice::setMTU(185);
+    BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
+    BLEDevice::setSecurityCallbacks(new ControllerBLESecurityCallbacks());
+    bleSecurity = new BLESecurity();
+    updateBLEPasskey();
+    bleSecurity->setCapability(ESP_IO_CAP_OUT);
+    bleSecurity->setKeySize(16);
+    bleSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    bleSecurity->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
+    bleServer = BLEDevice::createServer();
+    bleServer->setCallbacks(new ControllerBLEServerCallbacks());
+    BLEService* service = bleServer->createService(BLE_SERVICE_UUID);
+    BLECharacteristic* command = service->createCharacteristic(
+        BLE_COMMAND_UUID,
+        BLECharacteristic::PROPERTY_WRITE
+    );
+    command->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+    command->setCallbacks(new ControllerBLECommandCallbacks());
+
+    bleResponseCharacteristic = service->createCharacteristic(
+        BLE_RESPONSE_UUID,
+        BLECharacteristic::PROPERTY_INDICATE
+    );
+    bleResponseCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+    auto* responseDescriptor = new BLE2902();
+    responseDescriptor->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM | ESP_GATT_PERM_WRITE_ENC_MITM);
+    bleResponseCharacteristic->addDescriptor(responseDescriptor);
+
+    bleTelemetryCharacteristic = service->createCharacteristic(
+        BLE_TELEMETRY_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+    );
+    bleTelemetryCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+    auto* telemetryDescriptor = new BLE2902();
+    telemetryDescriptor->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM | ESP_GATT_PERM_WRITE_ENC_MITM);
+    bleTelemetryCharacteristic->addDescriptor(telemetryDescriptor);
+
+    service->start();
+    BLEAdvertising* advertising = BLEDevice::getAdvertising();
+    advertising->addServiceUUID(BLE_SERVICE_UUID);
+    advertising->setScanResponse(true);
+    advertising->setMinPreferred(0x06);
+    advertising->setMaxPreferred(0x12);
+    BLEDevice::startAdvertising();
+    ESP_LOGI(TAG, "ble control ready name=%s", deviceName);
+}
+
 // ═══════════════════════════════════════════
 //  Web Server Setup (runs on Core 0)
 // ═══════════════════════════════════════════
@@ -1800,32 +2546,11 @@ void setupWebServer() {
     });
 
     server.on("/api/upstream/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
-        UpstreamScanResult results[MAX_SCAN_RESULTS];
-        int resultCount = performUpstreamScan(results, MAX_SCAN_RESULTS);
-
-        if (resultCount < 0) {
-            req->send(409, "text/plain", "热点搜索忙，请稍后再试");
-            return;
-        }
-
-        String json = "{\"results\":[";
-        json.reserve(1200);
-
-        for (int i = 0; i < resultCount; ++i) {
-            if (i > 0) json += ",";
-            json += "{\"ssid\":\"";
-            json += jsonEscape(String(results[i].ssid));
-            json += "\",\"rssi\":";
-            json += String(results[i].rssi);
-            json += ",\"secure\":";
-            json += (results[i].secure ? "true" : "false");
-            json += ",\"saved\":";
-            json += (results[i].saved ? "true" : "false");
-            json += "}";
-        }
-
-        json += "]}";
-        req->send(200, "application/json", json);
+        int statusCode = 200;
+        String error;
+        String json = buildUpstreamScanJson(statusCode, error);
+        if (statusCode != 200) req->send(statusCode, "text/plain", error);
+        else req->send(200, "application/json", json);
     });
 
     server.on("/api/upstream/add", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -1836,33 +2561,12 @@ void setupWebServer() {
 
         String ssid = req->getParam("ssid")->value();
         String pass = req->hasParam("pass") ? req->getParam("pass")->value() : "";
-        ssid.trim();
-
-        if (ssid.isEmpty()) {
-            req->send(400, "text/plain", "热点名称不能为空");
-            return;
-        }
-        if (ssid.length() > 32 || pass.length() > 63) {
-            req->send(400, "text/plain", "热点名称或密码长度不合法");
-            return;
-        }
-        if (isReservedUpstreamSSID(ssid)) {
-            req->send(400, "text/plain", "不能保存本机发射的热点");
-            return;
-        }
-        if (findSavedUpstreamNetwork(ssid) < 0 && wifiCfg.networkCount >= MAX_UPSTREAM_NETWORKS) {
-            req->send(400, "text/plain", "已达到可保存热点上限");
-            return;
-        }
-
         bool overwritePass = req->hasParam("pass");
-        if (!addOrUpdateSavedUpstreamNetwork(ssid, pass, overwritePass)) {
-            req->send(400, "text/plain", "保存热点失败");
+        String error;
+        if (!saveUpstreamNetwork(ssid, pass, overwritePass, error)) {
+            req->send(400, "text/plain", error);
             return;
         }
-
-        saveConfig();
-        requestUpstreamApply();
         req->send(200, "text/plain", "OK");
     });
 
@@ -1872,108 +2576,73 @@ void setupWebServer() {
             return;
         }
 
-        String ssid = req->getParam("ssid")->value();
-        ssid.trim();
-        if (!removeSavedUpstreamNetwork(ssid)) {
-            req->send(404, "text/plain", "热点不存在");
+        String error;
+        if (!deleteUpstreamNetwork(req->getParam("ssid")->value(), error)) {
+            req->send(error == "热点不存在" ? 404 : 400, "text/plain", error);
             return;
         }
-
-        saveConfig();
-        requestUpstreamApply();
         req->send(200, "text/plain", "OK");
     });
 
     server.on("/api/set", HTTP_GET, [](AsyncWebServerRequest* req) {
-        bool changed = false;
-        bool wifiChanged = false;
-        bool apChanged = false;
-
+        ConfigPatch patch;
         if (req->hasParam("fsdEnable")) {
-            cfg.fsdEnable = req->getParam("fsdEnable")->value().toInt() != 0;
-            if (!cfg.fsdEnable) cfg.appliedSpeedOffsetKph = 0;
-            changed = true;
+            patch.hasFsdEnable = true;
+            patch.fsdEnable = req->getParam("fsdEnable")->value().toInt() != 0;
         }
         if (req->hasParam("hwMode")) {
-            uint8_t v = req->getParam("hwMode")->value().toInt();
-            if (v <= 2) {
-                if (v != cfg.hwMode && (v == 1 || cfg.hwMode == 1)) {
-                    resetHW3SpeedLimitState();
-                }
-                cfg.hwMode = v;
-                changed = true;
-            }
+            patch.hasHwMode = true;
+            patch.hwMode = req->getParam("hwMode")->value().toInt();
         }
         if (req->hasParam("speedProfile")) {
-            uint8_t v = req->getParam("speedProfile")->value().toInt();
-            if (v <= 4) { cfg.speedProfile = v; changed = true; }
+            patch.hasSpeedProfile = true;
+            patch.speedProfile = req->getParam("speedProfile")->value().toInt();
         }
         if (req->hasParam("profileMode")) {
-            cfg.profileModeAuto = req->getParam("profileMode")->value().toInt() != 0;
-            changed = true;
+            patch.hasProfileMode = true;
+            patch.profileModeAuto = req->getParam("profileMode")->value().toInt() != 0;
         }
         if (req->hasParam("isaChime")) {
-            cfg.isaChimeSuppress = req->getParam("isaChime")->value().toInt() != 0;
-            changed = true;
+            patch.hasIsaChime = true;
+            patch.isaChime = req->getParam("isaChime")->value().toInt() != 0;
         }
         if (req->hasParam("emergencyDet")) {
-            cfg.emergencyDetection = req->getParam("emergencyDet")->value().toInt() != 0;
-            changed = true;
+            patch.hasEmergencyDetection = true;
+            patch.emergencyDetection = req->getParam("emergencyDet")->value().toInt() != 0;
         }
         if (req->hasParam("chinaMode")) {
-            cfg.chinaMode = req->getParam("chinaMode")->value().toInt() != 0;
-            changed = true;
+            patch.hasChinaMode = true;
+            patch.chinaMode = req->getParam("chinaMode")->value().toInt() != 0;
         }
-        if (req->hasParam("apSSID") || req->hasParam("apPass")) {
-            String ssid = req->hasParam("apSSID") ? req->getParam("apSSID")->value() : String(apCfg.ssid);
-            String pass = req->hasParam("apPass") ? req->getParam("apPass")->value() : String(apCfg.pass);
-            ssid.trim();
-
-            if (ssid.isEmpty() || ssid.length() > 32) {
-                req->send(400, "text/plain", "热点名称长度必须为 1-32 个字符");
-                return;
-            }
-            if (pass.length() < 8 || pass.length() > 63) {
-                req->send(400, "text/plain", "热点密码长度必须为 8-63 个字符");
-                return;
-            }
-
-            if (ssid != String(apCfg.ssid) || pass != String(apCfg.pass)) {
-                copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), ssid);
-                copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), pass);
-                changed = true;
-                apChanged = true;
-            }
+        if (req->hasParam("apSSID")) {
+            patch.hasAPSSID = true;
+            patch.apSSID = req->getParam("apSSID")->value();
+        }
+        if (req->hasParam("apPass")) {
+            patch.hasAPPass = true;
+            patch.apPass = req->getParam("apPass")->value();
         }
         if (req->hasParam("upstreamEnable")) {
-            wifiCfg.enabled = req->getParam("upstreamEnable")->value().toInt() != 0;
-            changed = true;
-            wifiChanged = true;
+            patch.hasUpstreamEnable = true;
+            patch.upstreamEnable = req->getParam("upstreamEnable")->value().toInt() != 0;
         }
         if (req->hasParam("dnsWhitelistEnable")) {
-            dnsCfg.enabled = req->getParam("dnsWhitelistEnable")->value().toInt() != 0;
-            changed = true;
+            patch.hasDNSWhitelistEnable = true;
+            patch.dnsWhitelistEnable = req->getParam("dnsWhitelistEnable")->value().toInt() != 0;
         }
         if (req->hasParam("dnsAllowlist")) {
-            String value = req->getParam("dnsAllowlist")->value();
-            value.trim();
-            if (value.length() < static_cast<int>(sizeof(dnsCfg.allowlist))) {
-                copyStringToBuffer(dnsCfg.allowlist, sizeof(dnsCfg.allowlist), value);
-                changed = true;
-            }
+            patch.hasDNSAllowlist = true;
+            patch.dnsAllowlist = req->getParam("dnsAllowlist")->value();
         }
         if (req->hasParam("dnsBlocklist")) {
-            String value = req->getParam("dnsBlocklist")->value();
-            value.trim();
-            if (value.length() < static_cast<int>(sizeof(dnsCfg.blocklist))) {
-                copyStringToBuffer(dnsCfg.blocklist, sizeof(dnsCfg.blocklist), value);
-                changed = true;
-            }
+            patch.hasDNSBlocklist = true;
+            patch.dnsBlocklist = req->getParam("dnsBlocklist")->value();
         }
-
-        if (changed) saveConfig();
-        if (apChanged) requestLocalAPApply();
-        if (wifiChanged) requestUpstreamApply();
+        String error;
+        if (!applyConfigPatch(patch, error)) {
+            req->send(400, "text/plain", error);
+            return;
+        }
         req->send(200, "text/plain", "OK");
     });
 
@@ -2148,6 +2817,8 @@ void setup() {
     digitalWrite(PIN_LED, LOW);
 
     debugLogMutex = xSemaphoreCreateMutex();
+    configMutex = xSemaphoreCreateMutex();
+    bleCommandQueue = xQueueCreate(2, sizeof(BLECommand*));
     loadConfig();
     debugLogReady = debugLogMutex != nullptr;
     if (debugLogReady) {
@@ -2208,6 +2879,12 @@ void setup() {
     ESP_LOGI(TAG, "dns server started port=53");
 
     setupWebServer();
+    if (bleCommandQueue != nullptr) {
+        setupBLEControl();
+        xTaskCreatePinnedToCore(bleControlTask, "BLE", 12288, NULL, 1, NULL, 0);
+    } else {
+        ESP_LOGE(TAG, "ble command queue unavailable");
+    }
     xTaskCreatePinnedToCore(dnsTask, "DNS", 8192, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(diagnosticTask, "DIAG", 6144, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(canTask, "CAN", 8192, NULL, 2, NULL, 1);

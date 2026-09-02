@@ -1,0 +1,317 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		08DCBC4BE83910A555C1A580 /* BLEProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1EE1120F8D77061E601C77 /* BLEProtocol.swift */; };
+		6C8BC8C7429D0C657A1F4482 /* BLEProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD103E73AA03106F3A2A4863 /* BLEProtocolTests.swift */; };
+		72DAC23FECEF6EB428B44CC8 /* FSDControllerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D8B83C8007FD8518393AE3 /* FSDControllerApp.swift */; };
+		90CCC2021730E5BFB7F9E795 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDEC61C3E92914F99FC742B0 /* ContentView.swift */; };
+		BB5E305BF2E96553831A648F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 69C84EA38AF7F48BFF4EC288 /* Assets.xcassets */; };
+		E91C652661456BFE492A0C69 /* BLEController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80326A1551B241DD56D72FCE /* BLEController.swift */; };
+		F166811311B090FD1D6A5642 /* ControllerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D3825245B5B62CE67E2724 /* ControllerModels.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5A3558BC4DEA57BFCC6623F9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 95A46DAF4B5E252070EECA37 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 12A069178F9B922AA66A6FA1;
+			remoteInfo = FSDController;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		3CA1A93CBB10EE53DBBCC9F4 /* FSDControllerTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FSDControllerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		69C84EA38AF7F48BFF4EC288 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7871BFF7C8BAAEB050C9F53D /* FSDController.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FSDController.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		80326A1551B241DD56D72FCE /* BLEController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEController.swift; sourceTree = "<group>"; };
+		C9D3825245B5B62CE67E2724 /* ControllerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControllerModels.swift; sourceTree = "<group>"; };
+		D4D8B83C8007FD8518393AE3 /* FSDControllerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FSDControllerApp.swift; sourceTree = "<group>"; };
+		FD103E73AA03106F3A2A4863 /* BLEProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEProtocolTests.swift; sourceTree = "<group>"; };
+		FDEC61C3E92914F99FC742B0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		FE1EE1120F8D77061E601C77 /* BLEProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEProtocol.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1B0D2022E357FC05103A6B0B /* FSDController */ = {
+			isa = PBXGroup;
+			children = (
+				69C84EA38AF7F48BFF4EC288 /* Assets.xcassets */,
+				80326A1551B241DD56D72FCE /* BLEController.swift */,
+				FE1EE1120F8D77061E601C77 /* BLEProtocol.swift */,
+				FDEC61C3E92914F99FC742B0 /* ContentView.swift */,
+				C9D3825245B5B62CE67E2724 /* ControllerModels.swift */,
+				D4D8B83C8007FD8518393AE3 /* FSDControllerApp.swift */,
+			);
+			path = FSDController;
+			sourceTree = "<group>";
+		};
+		26316E89821F323FFC3D343B /* FSDControllerTests */ = {
+			isa = PBXGroup;
+			children = (
+				FD103E73AA03106F3A2A4863 /* BLEProtocolTests.swift */,
+			);
+			path = FSDControllerTests;
+			sourceTree = "<group>";
+		};
+		53789E5C57A6092F6D1A6BA6 = {
+			isa = PBXGroup;
+			children = (
+				1B0D2022E357FC05103A6B0B /* FSDController */,
+				26316E89821F323FFC3D343B /* FSDControllerTests */,
+				FE901812F56374E763276502 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FE901812F56374E763276502 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7871BFF7C8BAAEB050C9F53D /* FSDController.app */,
+				3CA1A93CBB10EE53DBBCC9F4 /* FSDControllerTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		12A069178F9B922AA66A6FA1 /* FSDController */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E05E25F7D56B7E3E904B17C5 /* Build configuration list for PBXNativeTarget "FSDController" */;
+			buildPhases = (
+				C41ECB81ED0D5147EA4146F1 /* Sources */,
+				AF78572C88F389B76CAC12CA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FSDController;
+			packageProductDependencies = (
+			);
+			productName = FSDController;
+			productReference = 7871BFF7C8BAAEB050C9F53D /* FSDController.app */;
+			productType = "com.apple.product-type.application";
+		};
+		50904CB67A5FAB8A6ADBBEFF /* FSDControllerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4708783A06F9C0B5B3CC847E /* Build configuration list for PBXNativeTarget "FSDControllerTests" */;
+			buildPhases = (
+				DD3F424FFD9568D42DB1AF8B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7F660632D773332336CED928 /* PBXTargetDependency */,
+			);
+			name = FSDControllerTests;
+			packageProductDependencies = (
+			);
+			productName = FSDControllerTests;
+			productReference = 3CA1A93CBB10EE53DBBCC9F4 /* FSDControllerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		95A46DAF4B5E252070EECA37 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					12A069178F9B922AA66A6FA1 = {
+						DevelopmentTeam = PDJCKTW6L6;
+						ProvisioningStyle = Automatic;
+					};
+					50904CB67A5FAB8A6ADBBEFF = {
+						DevelopmentTeam = PDJCKTW6L6;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 8CD433FD63800476B54EAD3F /* Build configuration list for PBXProject "FSDController" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 53789E5C57A6092F6D1A6BA6;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				12A069178F9B922AA66A6FA1 /* FSDController */,
+				50904CB67A5FAB8A6ADBBEFF /* FSDControllerTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AF78572C88F389B76CAC12CA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB5E305BF2E96553831A648F /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C41ECB81ED0D5147EA4146F1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E91C652661456BFE492A0C69 /* BLEController.swift in Sources */,
+				08DCBC4BE83910A555C1A580 /* BLEProtocol.swift in Sources */,
+				90CCC2021730E5BFB7F9E795 /* ContentView.swift in Sources */,
+				F166811311B090FD1D6A5642 /* ControllerModels.swift in Sources */,
+				72DAC23FECEF6EB428B44CC8 /* FSDControllerApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DD3F424FFD9568D42DB1AF8B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6C8BC8C7429D0C657A1F4482 /* BLEProtocolTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7F660632D773332336CED928 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 12A069178F9B922AA66A6FA1 /* FSDController */;
+			targetProxy = 5A3558BC4DEA57BFCC6623F9 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		4E5E2DFB4CDD61B3DF7B97C4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.trytofly.fsdcontroller.tests;
+				PRODUCT_NAME = FSDControllerTests;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FSDController.app/FSDController";
+			};
+			name = Release;
+		};
+		651A468F90E1472F68F64CFF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.trytofly.fsdcontroller.tests;
+				PRODUCT_NAME = FSDControllerTests;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FSDController.app/FSDController";
+			};
+			name = Debug;
+		};
+		669C5CBDCE9BC1FFF3A2335E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "FSD Controller";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "用于通过安全蓝牙连接并控制 ESP32 FSD 控制器。";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.trytofly.fsdcontroller;
+				PRODUCT_MODULE_NAME = FSDController;
+				PRODUCT_NAME = FSDController;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		6713BF64D5391F85D610917C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = PDJCKTW6L6;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		967BEEFE6244CC73E2B10315 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "FSD Controller";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "用于通过安全蓝牙连接并控制 ESP32 FSD 控制器。";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.trytofly.fsdcontroller;
+				PRODUCT_MODULE_NAME = FSDController;
+				PRODUCT_NAME = FSDController;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F7EEBF5DE1892089460786AA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = PDJCKTW6L6;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4708783A06F9C0B5B3CC847E /* Build configuration list for PBXNativeTarget "FSDControllerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				651A468F90E1472F68F64CFF /* Debug */,
+				4E5E2DFB4CDD61B3DF7B97C4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8CD433FD63800476B54EAD3F /* Build configuration list for PBXProject "FSDController" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F7EEBF5DE1892089460786AA /* Debug */,
+				6713BF64D5391F85D610917C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E05E25F7D56B7E3E904B17C5 /* Build configuration list for PBXNativeTarget "FSDController" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				967BEEFE6244CC73E2B10315 /* Debug */,
+				669C5CBDCE9BC1FFF3A2335E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 95A46DAF4B5E252070EECA37 /* Project object */;
+}
