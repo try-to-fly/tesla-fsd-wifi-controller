@@ -20,6 +20,7 @@ struct FSDConfig {
     volatile bool     isaChimeSuppress    = false;
     volatile bool     emergencyDetection  = true;
     volatile bool     chinaMode          = true;   // CN firmware: bypass isFSDSelectedInUI check  (默认开启)
+    volatile uint8_t  speedLimitPolicy    = SPEED_LIMIT_POLICY_SMART;  // 255=智能, 0/5/10=固定超速%
     volatile uint16_t detectedSpeedLimitKph = 0;    // resolved limit from vision/fused/map
     volatile uint8_t  detectedSpeedSource   = 0;    // SpeedLimitSource
     volatile uint8_t  appliedSpeedOffsetKph = 0;    // actual injected offset in km/h
@@ -268,7 +269,8 @@ static void handleHW3(CanFrame& frame, CanDriver& driver) {
         }
         if (index == 2 && cfg.fsdTriggered && cfg.fsdEnable) {
             uint8_t originalOffsetKph = static_cast<uint8_t>(std::min<uint16_t>(hw3RawUserOffsetKph, 30));
-            SmartSpeedDecision smartDecision = computeSmartSpeedDecision(cfg.detectedSpeedLimitKph);
+            SmartSpeedDecision smartDecision =
+                computeSpeedDecision(cfg.detectedSpeedLimitKph, cfg.speedLimitPolicy);
             uint8_t appliedOffsetKph = smartDecision.offsetKph > 0
                 ? smartDecision.offsetKph
                 : std::min<uint8_t>(originalOffsetKph, HW3_AUTO_OFFSET_FALLBACK_KPH);

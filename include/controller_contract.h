@@ -15,6 +15,7 @@ enum class ConfigValidationError : uint8_t {
     None,
     InvalidHardwareMode,
     InvalidSpeedProfile,
+    InvalidSpeedLimitPolicy,
     InvalidAPSSID,
     InvalidAPPassword,
     DNSAllowlistTooLong,
@@ -26,6 +27,8 @@ struct ConfigValidationInput {
     uint8_t hardwareMode = 0;
     bool hasSpeedProfile = false;
     uint8_t speedProfile = 0;
+    bool hasSpeedLimitPolicy = false;
+    uint8_t speedLimitPolicy = 0;
     bool touchesAP = false;
     size_t apSSIDLength = 0;
     size_t apPasswordLength = 0;
@@ -37,12 +40,19 @@ struct ConfigValidationInput {
     size_t dnsBlocklistCapacity = 0;
 };
 
+inline bool isValidSpeedLimitPolicyValue(uint8_t policy) {
+    return policy == 255 || policy == 0 || policy == 5 || policy == 10;
+}
+
 inline ConfigValidationError validateConfig(const ConfigValidationInput& input) {
     if (input.hasHardwareMode && input.hardwareMode > 2) {
         return ConfigValidationError::InvalidHardwareMode;
     }
     if (input.hasSpeedProfile && input.speedProfile > 4) {
         return ConfigValidationError::InvalidSpeedProfile;
+    }
+    if (input.hasSpeedLimitPolicy && !isValidSpeedLimitPolicyValue(input.speedLimitPolicy)) {
+        return ConfigValidationError::InvalidSpeedLimitPolicy;
     }
     if (input.touchesAP && (input.apSSIDLength == 0 || input.apSSIDLength > 32)) {
         return ConfigValidationError::InvalidAPSSID;

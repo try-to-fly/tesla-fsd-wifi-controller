@@ -36,6 +36,7 @@ struct ControllerStatus: Decodable, Equatable {
     var fsdEnable = 0
     var hwMode = 0
     var speedProfile = 0
+    var speedLimitPolicy = 255
     var profileMode = 0
     var detectedSpeedLimitKph = 0
     var appliedSpeedOffsetKph = 0
@@ -82,7 +83,7 @@ struct ControllerStatus: Decodable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case rx, modified, errors, uptime, rxActive, modifiedActive, canReady, canOK
-        case fsdTriggered, fsdEnable, hwMode, speedProfile, profileMode
+        case fsdTriggered, fsdEnable, hwMode, speedProfile, speedLimitPolicy, profileMode
         case detectedSpeedLimitKph, appliedSpeedOffsetKph, vehicleSpeedKph, vehicleSpeedValid
         case chipTempC, thermalStatus, thermalProtect, isaChime, emergencyDet, chinaMode
         case apRunning, apSSID, apIP, apClients
@@ -108,6 +109,7 @@ struct ControllerStatus: Decodable, Equatable {
         fsdEnable = try c.decodeIfPresent(Int.self, forKey: .fsdEnable) ?? 0
         hwMode = try c.decodeIfPresent(Int.self, forKey: .hwMode) ?? 0
         speedProfile = try c.decodeIfPresent(Int.self, forKey: .speedProfile) ?? 0
+        speedLimitPolicy = try c.decodeIfPresent(Int.self, forKey: .speedLimitPolicy) ?? 255
         profileMode = try c.decodeIfPresent(Int.self, forKey: .profileMode) ?? 0
         detectedSpeedLimitKph = try c.decodeIfPresent(Int.self, forKey: .detectedSpeedLimitKph) ?? 0
         appliedSpeedOffsetKph = try c.decodeIfPresent(Int.self, forKey: .appliedSpeedOffsetKph) ?? 0

@@ -86,6 +86,7 @@ private struct OverviewView: View {
                 LabeledContent("车辆速度", value: vehicleSpeedValid ? String(format: "%.1f km/h", vehicleSpeed) : "--")
                 LabeledContent("识别限速", value: detectedLimit > 0 ? "\(detectedLimit) km/h" : "--")
                 LabeledContent("当前偏移", value: "\(appliedOffset >= 0 ? "+" : "")\(appliedOffset) km/h")
+                LabeledContent("限速策略", value: speedLimitPolicyLabel)
                 LabeledContent("芯片温度", value: temperature.map { String(format: "%.1f ℃", $0) } ?? "--")
             }
             Section("网络链路") {
@@ -106,6 +107,14 @@ private struct OverviewView: View {
     private var vehicleSpeedValid: Bool { controller.telemetry?.vehicleSpeedValid ?? controller.status?.vehicleSpeedValid ?? false }
     private var detectedLimit: Int { controller.telemetry?.detectedSpeedLimitKPH ?? controller.status?.detectedSpeedLimitKph ?? 0 }
     private var appliedOffset: Int { controller.telemetry?.appliedSpeedOffsetKPH ?? controller.status?.appliedSpeedOffsetKph ?? 0 }
+    private var speedLimitPolicyLabel: String {
+        switch controller.status?.speedLimitPolicy ?? 255 {
+        case 0: return "超速 0% · 整体上限 135 km/h"
+        case 5: return "超速 5% · 整体上限 135 km/h"
+        case 10: return "超速 10% · 整体上限 135 km/h"
+        default: return "智能 · 整体上限 135 km/h"
+        }
+    }
     private var temperature: Double? { controller.telemetry?.chipTemperatureC ?? controller.status?.chipTempC }
     private var apRunning: Bool { controller.telemetry?.accessPointRunning ?? controller.status?.apRunning ?? false }
     private var upstreamConnected: Bool { controller.telemetry?.upstreamConnected ?? controller.status?.upstreamConnected ?? false }
@@ -135,6 +144,15 @@ private struct FSDView: View {
                     Text("手动").tag(false)
                     Text("自动（拨杆）").tag(true)
                 }
+                Picker("限速策略", selection: intBinding("speedLimitPolicy") { $0.speedLimitPolicy }) {
+                    Text("智能").tag(255)
+                    Text("超速 0%").tag(0)
+                    Text("超速 5%").tag(5)
+                    Text("超速 10%").tag(10)
+                }
+                Text("百分比模式按识别限速统一上浮；所有模式目标车速不超过 135 km/h。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             Section("附加功能") {
                 Toggle("抑制 ISA 限速提示音", isOn: boolBinding("isaChime") { $0.isaChime == 1 })

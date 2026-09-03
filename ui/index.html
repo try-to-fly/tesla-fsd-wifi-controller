@@ -416,6 +416,30 @@
                 ></button>
               </div>
             </div>
+            <div class="row">
+              <span class="row-label">限速策略</span>
+              <div class="picker-wrap">
+                <select
+                  id="speedLimitPolicy"
+                  class="picker-native"
+                  data-picker-title="限速策略"
+                  data-picker-trigger="speedLimitPolicyBtn"
+                  onchange="setVal('speedLimitPolicy',this.value)"
+                >
+                  <option value="255" selected>智能</option>
+                  <option value="0">超速 0%</option>
+                  <option value="5">超速 5%</option>
+                  <option value="10">超速 10%</option>
+                </select>
+                <button
+                  type="button"
+                  class="picker-trigger"
+                  id="speedLimitPolicyBtn"
+                  onclick="openPicker('speedLimitPolicy')"
+                ></button>
+              </div>
+            </div>
+            <p class="row-hint">百分比模式按识别限速统一上浮；所有模式目标车速不超过 135 km/h。</p>
           </div>
 
           <div class="dialog-card">
