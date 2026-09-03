@@ -1461,6 +1461,13 @@ select,
     scroll-behavior:auto !important;
   }
 }
+
+.row-hint{
+  margin:4px 2px 0;
+  font-size:12px;
+  line-height:1.4;
+  color:var(--muted);
+}
 </style>
   </head>
   <body>
@@ -1870,6 +1877,30 @@ select,
                 ></button>
               </div>
             </div>
+            <div class="row">
+              <span class="row-label">限速策略</span>
+              <div class="picker-wrap">
+                <select
+                  id="speedLimitPolicy"
+                  class="picker-native"
+                  data-picker-title="限速策略"
+                  data-picker-trigger="speedLimitPolicyBtn"
+                  onchange="setVal('speedLimitPolicy',this.value)"
+                >
+                  <option value="255" selected>智能</option>
+                  <option value="0">超速 0%</option>
+                  <option value="5">超速 5%</option>
+                  <option value="10">超速 10%</option>
+                </select>
+                <button
+                  type="button"
+                  class="picker-trigger"
+                  id="speedLimitPolicyBtn"
+                  onclick="openPicker('speedLimitPolicy')"
+                ></button>
+              </div>
+            </div>
+            <p class="row-hint">百分比模式按识别限速统一上浮；所有模式目标车速不超过 135 km/h。</p>
           </div>
 
           <div class="dialog-card">
@@ -2774,6 +2805,14 @@ function updateVehicleSpeedTelemetry(data){
   updateVehicleAcceleration(speedValid);
 }
 
+function describeSpeedLimitPolicy(policy){
+  const value=Number(policy);
+  if(value===0) return '超速 0% · 整体上限 135 km/h';
+  if(value===5) return '超速 5% · 整体上限 135 km/h';
+  if(value===10) return '超速 10% · 整体上限 135 km/h';
+  return '智能 · 低速更积极，高于60固定10% · 整体上限 135 km/h';
+}
+
 function syncDashboardSummary(data){
   const hwSelect=document.getElementById('hwMode');
   const fsdToggle=document.getElementById('fsdEnable');
@@ -2794,7 +2833,8 @@ function syncDashboardSummary(data){
   const appliedOffsetLabel='+'+String(appliedOffsetKph)+' km/h';
   const sourceLabel=detectedSpeedSource||'--';
   let offsetState='读取中';
-  let policySummary='低于30→30，30→45，40→55，50→65，60→72，高于60固定10%';
+  const selectedPolicy=data?Number(data.speedLimitPolicy??255):Number((document.getElementById('speedLimitPolicy')||{}).value||255);
+  let policySummary=describeSpeedLimitPolicy(selectedPolicy);
   let limitLabel='--';
 
   if(data&&detectedLimitKph>0){
@@ -2812,7 +2852,7 @@ function syncDashboardSummary(data){
     offsetState='按识别限速自动上浮';
   }else if(data){
     offsetState='未识别到有效限速，回退到温和默认增量';
-    policySummary+=' · 识别丢失时回退到 +'+String(10)+' km/h 内';
+    policySummary+=' · 识别丢失时回退到 +'+String(10)+' km/h 内 · 整体上限 135 km/h';
   }
 
   setTextIfPresent('hwModeBadge','硬件 '+hwLabel);
@@ -3158,8 +3198,12 @@ function poll(){
     document.getElementById('isaChime').checked=!!d.isaChime;
     document.getElementById('emergencyDet').checked=!!d.emergencyDet;
     document.getElementById('chinaMode').checked=!!d.chinaMode;
+    if(d.speedLimitPolicy!==undefined){
+      document.getElementById('speedLimitPolicy').value=String(d.speedLimitPolicy);
+    }
 
     syncPickerButton('hwMode');
+    syncPickerButton('speedLimitPolicy');
     syncPickerButton('speedProfile');
     syncPickerButton('profileMode');
     syncPickerButton('scanResults');
@@ -3369,7 +3413,7 @@ function deleteSavedUpstream(ssid){
   });
 }
 
-['hwMode','speedProfile','profileMode','scanResults'].forEach(syncPickerButton);
+['hwMode','speedProfile','profileMode','speedLimitPolicy','scanResults'].forEach(syncPickerButton);
 syncDashboardSummary();
 
 document.addEventListener('keydown',evt=>{

@@ -18,6 +18,15 @@ struct SmartSpeedDecision {
 
 static constexpr uint8_t HW3_AUTO_OFFSET_FALLBACK_KPH = 10;
 static constexpr uint8_t HW3_HIGH_SPEED_OFFSET_PERCENT = 10;
+static constexpr uint16_t HW3_MAX_TARGET_SPEED_KPH = 135;
+static constexpr uint8_t SPEED_LIMIT_POLICY_SMART = 255;
+
+inline bool isValidSpeedLimitPolicy(uint8_t policy) {
+    return policy == SPEED_LIMIT_POLICY_SMART
+        || policy == 0
+        || policy == 5
+        || policy == 10;
+}
 
 inline uint16_t decodeFiveStepSpeedLimitKph(uint8_t raw) {
     if (raw == 0 || raw >= 31) return 0;
@@ -58,21 +67,49 @@ inline int encodeOffsetFieldFromPercent(uint16_t offsetPercent) {
     return static_cast<int>(std::min<uint32_t>(static_cast<uint32_t>(offsetPercent) * 5U, 255U));
 }
 
-inline SmartSpeedDecision computeSmartSpeedDecision(uint16_t limitKph) {
+inline SmartSpeedDecision computeSpeedDecision(uint16_t limitKph, uint8_t policy) {
     SmartSpeedDecision decision;
-    if (limitKph == 0) return decision;
+    if (limitKph == 0 || !isValidSpeedLimitPolicy(policy)) return decision;
 
-    decision.targetKph = computeSmartTargetSpeedKph(limitKph);
+    uint16_t uncappedTarget = 0;
+    uint8_t percentForRaw = 0;
+    bool usePercentRaw = false;
+
+    if (policy == SPEED_LIMIT_POLICY_SMART) {
+        uncappedTarget = computeSmartTargetSpeedKph(limitKph);
+        if (limitKph > 60) {
+            usePercentRaw = true;
+            percentForRaw = HW3_HIGH_SPEED_OFFSET_PERCENT;
+        }
+    } else {
+        percentForRaw = policy;
+        usePercentRaw = true;
+        uncappedTarget = static_cast<uint16_t>(
+            limitKph + computePercentOffsetKph(limitKph, policy)
+        );
+    }
+
+    decision.targetKph = std::min<uint16_t>(uncappedTarget, HW3_MAX_TARGET_SPEED_KPH);
     uint16_t offset = decision.targetKph > limitKph
         ? static_cast<uint16_t>(decision.targetKph - limitKph)
         : 0;
     decision.offsetKph = static_cast<uint8_t>(std::min<uint16_t>(offset, 255U));
-    decision.offsetRaw = static_cast<uint8_t>(
-        limitKph > 60
-            ? encodeOffsetFieldFromPercent(HW3_HIGH_SPEED_OFFSET_PERCENT)
-            : encodeOffsetFieldFromTargetKph(limitKph, decision.targetKph)
-    );
+
+    const bool capped = decision.targetKph < uncappedTarget;
+    if (decision.offsetKph == 0) {
+        decision.offsetRaw = 0;
+    } else if (usePercentRaw && !capped && percentForRaw > 0) {
+        decision.offsetRaw = static_cast<uint8_t>(encodeOffsetFieldFromPercent(percentForRaw));
+    } else {
+        decision.offsetRaw = static_cast<uint8_t>(
+            encodeOffsetFieldFromTargetKph(limitKph, decision.targetKph)
+        );
+    }
     return decision;
+}
+
+inline SmartSpeedDecision computeSmartSpeedDecision(uint16_t limitKph) {
+    return computeSpeedDecision(limitKph, SPEED_LIMIT_POLICY_SMART);
 }
 
 inline uint8_t computeSmartOffsetKph(uint16_t limitKph) {

@@ -146,6 +146,8 @@ struct ConfigPatch {
     bool emergencyDetection = false;
     bool hasChinaMode = false;
     bool chinaMode = false;
+    bool hasSpeedLimitPolicy = false;
+    uint8_t speedLimitPolicy = 0;
     bool hasAPSSID = false;
     String apSSID;
     bool hasAPPass = false;
@@ -1562,6 +1564,7 @@ void loadConfig() {
     cfg.isaChimeSuppress   = prefs.getBool("isaChm", false);
     cfg.emergencyDetection = prefs.getBool("emDet", true);
     cfg.chinaMode          = prefs.getBool("cnMode", true);  // 默认开启 chinaMode
+    cfg.speedLimitPolicy   = prefs.getUChar("spLimPol", SPEED_LIMIT_POLICY_SMART);
     copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), prefs.getString("apSsid", DEFAULT_AP_SSID));
     copyStringToBuffer(apCfg.pass, sizeof(apCfg.pass), prefs.getString("apPass", DEFAULT_AP_PASS));
     clearSavedUpstreamNetworks();
@@ -1587,6 +1590,7 @@ void loadConfig() {
     // Clamp values
     if (cfg.hwMode > 2)       cfg.hwMode = 2;
     if (cfg.speedProfile > 4) cfg.speedProfile = 1;
+    if (!isValidSpeedLimitPolicy(cfg.speedLimitPolicy)) cfg.speedLimitPolicy = SPEED_LIMIT_POLICY_SMART;
     if (apCfg.ssid[0] == '\0') {
         copyStringToBuffer(apCfg.ssid, sizeof(apCfg.ssid), String(DEFAULT_AP_SSID));
     }
@@ -1605,6 +1609,7 @@ void saveConfig() {
     prefs.remove("spOffEn");
     prefs.remove("spOffCap");
     prefs.remove("spOffPct");
+    prefs.putUChar("spLimPol", cfg.speedLimitPolicy);
     prefs.putBool("isaChm",  cfg.isaChimeSuppress);
     prefs.putBool("emDet",   cfg.emergencyDetection);
     prefs.putBool("cnMode",  cfg.chinaMode);
@@ -1650,6 +1655,8 @@ bool applyConfigPatch(const ConfigPatch& patch, String& error) {
     validation.hardwareMode = patch.hwMode;
     validation.hasSpeedProfile = patch.hasSpeedProfile;
     validation.speedProfile = patch.speedProfile;
+    validation.hasSpeedLimitPolicy = patch.hasSpeedLimitPolicy;
+    validation.speedLimitPolicy = patch.speedLimitPolicy;
     validation.touchesAP = patch.hasAPSSID || patch.hasAPPass;
     validation.apSSIDLength = nextAPSSID.length();
     validation.apPasswordLength = nextAPPass.length();
@@ -1665,6 +1672,9 @@ bool applyConfigPatch(const ConfigPatch& patch, String& error) {
             break;
         case controller_contract::ConfigValidationError::InvalidSpeedProfile:
             error = "速度模式无效";
+            break;
+        case controller_contract::ConfigValidationError::InvalidSpeedLimitPolicy:
+            error = "限速策略无效";
             break;
         case controller_contract::ConfigValidationError::InvalidAPSSID:
             error = "热点名称长度必须为 1-32 个字符";
@@ -1720,6 +1730,10 @@ bool applyConfigPatch(const ConfigPatch& patch, String& error) {
     }
     if (patch.hasChinaMode && cfg.chinaMode != patch.chinaMode) {
         cfg.chinaMode = patch.chinaMode;
+        changed = true;
+    }
+    if (patch.hasSpeedLimitPolicy && cfg.speedLimitPolicy != patch.speedLimitPolicy) {
+        cfg.speedLimitPolicy = patch.speedLimitPolicy;
         changed = true;
     }
     if ((patch.hasAPSSID || patch.hasAPPass)
@@ -1906,6 +1920,8 @@ String buildStatusJson(
     json += String((int)cfg.hwMode);
     json += ",\"speedProfile\":";
     json += String((int)cfg.speedProfile);
+    json += ",\"speedLimitPolicy\":";
+    json += String((int)cfg.speedLimitPolicy);
     json += ",\"profileMode\":";
     json += String((int)cfg.profileModeAuto);
     json += ",\"detectedSpeedLimitKph\":";
@@ -2120,6 +2136,7 @@ bool parseBLEConfigPatch(cJSON* args, ConfigPatch& patch, String& error) {
         && parseJSONBool(args, "isaChime", patch.hasIsaChime, patch.isaChime, error)
         && parseJSONBool(args, "emergencyDet", patch.hasEmergencyDetection, patch.emergencyDetection, error)
         && parseJSONBool(args, "chinaMode", patch.hasChinaMode, patch.chinaMode, error)
+        && parseJSONUInt8(args, "speedLimitPolicy", patch.hasSpeedLimitPolicy, patch.speedLimitPolicy, error)
         && parseJSONString(args, "apSSID", patch.hasAPSSID, patch.apSSID, error)
         && parseJSONString(args, "apPass", patch.hasAPPass, patch.apPass, error)
         && parseJSONBool(args, "upstreamEnable", patch.hasUpstreamEnable, patch.upstreamEnable, error)
@@ -2616,6 +2633,10 @@ void setupWebServer() {
         if (req->hasParam("chinaMode")) {
             patch.hasChinaMode = true;
             patch.chinaMode = req->getParam("chinaMode")->value().toInt() != 0;
+        }
+        if (req->hasParam("speedLimitPolicy")) {
+            patch.hasSpeedLimitPolicy = true;
+            patch.speedLimitPolicy = static_cast<uint8_t>(req->getParam("speedLimitPolicy")->value().toInt());
         }
         if (req->hasParam("apSSID")) {
             patch.hasAPSSID = true;

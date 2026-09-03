@@ -29,6 +29,20 @@ void test_config_validation_boundaries() {
         static_cast<int>(ConfigValidationError::InvalidAPPassword),
         static_cast<int>(validateConfig(input))
     );
+
+    input.apPasswordLength = 63;
+    input.hasSpeedLimitPolicy = true;
+    input.speedLimitPolicy = 255;
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(ConfigValidationError::None),
+        static_cast<int>(validateConfig(input))
+    );
+
+    input.speedLimitPolicy = 7;
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(ConfigValidationError::InvalidSpeedLimitPolicy),
+        static_cast<int>(validateConfig(input))
+    );
 }
 
 void test_ble_status_hides_ap_password() {
